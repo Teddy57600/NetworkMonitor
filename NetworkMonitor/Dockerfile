@@ -13,7 +13,8 @@ WORKDIR /app
 # Cette phase est utilisée pour générer le projet de service
 FROM mcr.microsoft.com/dotnet/sdk:11.0-preview AS build
 # Installer les dépendances clang/zlib1g-dev pour la publication en mode natif
-RUN apt-get update \
+RUN rm -rf /var/lib/apt/lists/* \
+    && apt-get update \
     && apt-get install -y --no-install-recommends \
     clang zlib1g-dev
 ARG BUILD_CONFIGURATION=Release
@@ -42,4 +43,10 @@ USER app
 FROM ${FINAL_BASE_IMAGE:-mcr.microsoft.com/dotnet/runtime-deps:11.0-preview} AS final
 WORKDIR /app
 COPY --from=publish /app/publish .
+
+ENV PUSHOVER_TOKEN=""
+ENV PUSHOVER_USER=""
+
 ENTRYPOINT ["./NetworkMonitor"]
+
+LABEL Version="1.0.0"
