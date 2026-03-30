@@ -1,6 +1,7 @@
 ﻿using System.Net.NetworkInformation;
 using System.Net.Http;
 using System.Net.Sockets;
+using System.Text.Json;
 using Cronos;
 using Microsoft.Extensions.Logging;
 
@@ -38,10 +39,10 @@ internal class Program
         while (!cts.Token.IsCancellationRequested)
         {
             foreach (var monitor in monitors.Values)
-                await monitor.Check();
+                await monitor.Check(cts.Token);
 
             foreach (var tcpMonitor in tcpMonitors)
-                await tcpMonitor.Check();
+                await tcpMonitor.Check(cts.Token);
 
             try
             {
@@ -139,7 +140,7 @@ class MonitorState
         _logger = logger;
     }
 
-    public async Task Check()
+    public async Task Check(CancellationToken ct = default)
     {
         // Circuit breaker OPEN
         if (DateTime.UtcNow < _lastCheckAllowed)
@@ -160,7 +161,7 @@ class MonitorState
                 _downSince = DateTime.UtcNow;
 
                 _logger.LogWarning("🔴 DOWN : IP {Ip} injoignable après {Count} échecs consécutifs", _ip, _failCount);
-                await Send("🔴 DOWN", $"IP {_ip} KO", 1);
+                await Send("🔴 DOWN", $"IP {_ip} KO", 1, ct);
 
                 // ouvre circuit pendant 1 min
                 _lastCheckAllowed = DateTime.UtcNow.AddMinutes(1);
@@ -169,7 +170,7 @@ class MonitorState
                      (DateTime.UtcNow - _downSince.Value).TotalMinutes > 5)
             {
                 _logger.LogError("🚨 STILL DOWN : IP {Ip} toujours KO depuis {Minutes:F0} min", _ip, (DateTime.UtcNow - _downSince.Value).TotalMinutes);
-                await Send("🚨 STILL DOWN", $"IP {_ip} toujours KO", 2);
+                await Send("🚨 STILL DOWN", $"IP {_ip} toujours KO", 2, ct);
 
                 _downSince = DateTime.UtcNow;
             }
@@ -179,7 +180,7 @@ class MonitorState
             if (_isDown)
             {
                 _logger.LogInformation("🟢 RECOVERY : IP {Ip} de nouveau joignable", _ip);
-                await Send("🟢 RECOVERY", $"IP {_ip} OK", 0);
+                await Send("🟢 RECOVERY", $"IP {_ip} OK", 0, ct);
             }
 
             _logger.LogInformation("IP {Ip} est UP", _ip);
@@ -204,47 +205,65 @@ class MonitorState
             }
             catch (Exception ex)
             {
-                _logger.LogDebug(ex, "Ping {Ip} — tentative {Attempt}/3 : exception", _ip, i + 1);
-            }
+                            _logger.LogDebug(ex, "Ping {Ip} — tentative {Attempt}/3 : exception", _ip, i + 1);
+                            }
 
-            await Task.Delay(1000);
-        }
+                            await Task.Delay(1000);
+                        }
 
-        return false;
-    }
+                        return false;
+                    }
 
-    private async Task Send(string title, string message, int priority)
-    {
-        try
-        {
-            using var client = new HttpClient();
+                    private async Task Send(string title, string message, int priority, CancellationToken ct = default)
+                    {
+                        if (PushoverSnooze.IsSnoozed)
+                        {
+                            _logger.LogDebug("🔕 Notification ignorée (snooze actif jusqu'au {Until:dd/MM/yyyy HH:mm} UTC) : {Title}", PushoverSnooze.SnoozeUntil, title);
+                            return;
+                        }
 
-            var data = new Dictionary<string, string>
-            {
-                ["token"] = Environment.GetEnvironmentVariable("PUSHOVER_TOKEN")!,
-                ["user"] = Environment.GetEnvironmentVariable("PUSHOVER_USER")!,
-                ["title"] = title,
-                ["message"] = message,
-                ["priority"] = priority.ToString()
-            };
+                        try
+                        {
+                            using var client = new HttpClient();
 
-            if (priority == 2)
-            {
-                data["retry"] = "30";
-                data["expire"] = "300";
-            }
+                            var data = new Dictionary<string, string>
+                            {
+                                ["token"] = Environment.GetEnvironmentVariable("PUSHOVER_TOKEN")!,
+                                ["user"] = Environment.GetEnvironmentVariable("PUSHOVER_USER")!,
+                                ["title"] = title,
+                                ["message"] = message,
+                                ["priority"] = priority.ToString()
+                            };
 
-            var response = await client.PostAsync("https://api.pushover.net/1/messages.json",
-                new FormUrlEncodedContent(data));
+                            if (priority == 2)
+                            {
+                                data["retry"] = "30";
+                                data["expire"] = "300";
+                            }
 
-            _logger.LogDebug("Notification Pushover envoyée : {Title} (HTTP {StatusCode})", title, (int)response.StatusCode);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Échec de l'envoi de la notification Pushover : {Title}", title);
-        }
-    }
-}
+                            var response = await client.PostAsync("https://api.pushover.net/1/messages.json",
+                                new FormUrlEncodedContent(data), ct);
+
+                            _logger.LogDebug("Notification Pushover envoyée : {Title} (HTTP {StatusCode})", title, (int)response.StatusCode);
+
+                            if (priority == 2 && response.IsSuccessStatusCode)
+                            {
+                                var json = await response.Content.ReadAsStringAsync(ct);
+                                var doc = JsonDocument.Parse(json);
+                                if (doc.RootElement.TryGetProperty("receipt", out var receiptProp))
+                                {
+                                    var receipt = receiptProp.GetString();
+                                    if (!string.IsNullOrEmpty(receipt))
+                                        PushoverSnooze.StartWatching(receipt, _logger, ct);
+                                }
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogError(ex, "Échec de l'envoi de la notification Pushover : {Title}", title);
+                        }
+                    }
+                }
 
 class TcpPortMonitorState
 {
@@ -263,7 +282,7 @@ class TcpPortMonitorState
         _logger = logger;
     }
 
-    public async Task Check()
+    public async Task Check(CancellationToken ct = default)
     {
         // Circuit breaker OPEN
         if (DateTime.UtcNow < _lastCheckAllowed)
@@ -284,7 +303,7 @@ class TcpPortMonitorState
                 _downSince = DateTime.UtcNow;
 
                 _logger.LogWarning("🔴 DOWN : {Host}:{Port} inaccessible après {Count} tentatives", _host, _port, _failCount * 3);
-                await Send("🔴 DOWN", $"Port TCP {_port} ({_host}) KO", 1);
+                await Send("🔴 DOWN", $"Port TCP {_port} ({_host}) KO", 1, ct);
 
                 // ouvre circuit pendant 1 min
                 _lastCheckAllowed = DateTime.UtcNow.AddMinutes(1);
@@ -293,7 +312,7 @@ class TcpPortMonitorState
                      (DateTime.UtcNow - _downSince.Value).TotalMinutes > 5)
             {
                 _logger.LogError("🚨 STILL DOWN : {Host}:{Port} toujours KO depuis {Minutes:F0} min", _host, _port, (DateTime.UtcNow - _downSince.Value).TotalMinutes);
-                await Send("🚨 STILL DOWN", $"Port TCP {_port} ({_host}) toujours KO", 2);
+                await Send("🚨 STILL DOWN", $"Port TCP {_port} ({_host}) toujours KO", 2, ct);
 
                 _downSince = DateTime.UtcNow;
             }
@@ -303,7 +322,7 @@ class TcpPortMonitorState
             if (_isDown)
             {
                 _logger.LogInformation("🟢 RECOVERY : {Host}:{Port} de nouveau accessible", _host, _port);
-                await Send("🟢 RECOVERY", $"Port TCP {_port} ({_host}) OK", 0);
+                await Send("🟢 RECOVERY", $"Port TCP {_port} ({_host}) OK", 0, ct);
             }
 
             _logger.LogInformation("TCP {Host}:{Port} est UP", _host, _port);
@@ -325,44 +344,133 @@ class TcpPortMonitorState
             }
             catch (Exception ex)
             {
-                _logger.LogDebug("TCP {Host}:{Port} — tentative {Attempt}/3 : exception", _host, _port, i + 1);
-            }
+                            _logger.LogDebug("TCP {Host}:{Port} — tentative {Attempt}/3 : exception", _host, _port, i + 1);
+                            }
 
-            await Task.Delay(1000);
-        }
+                            await Task.Delay(1000);
+                        }
 
-        return false;
-    }
+                        return false;
+                    }
 
-    private async Task Send(string title, string message, int priority)
-    {
-        try
-        {
-            using var client = new HttpClient();
+                    private async Task Send(string title, string message, int priority, CancellationToken ct = default)
+                    {
+                        if (PushoverSnooze.IsSnoozed)
+                        {
+                            _logger.LogDebug("🔕 Notification ignorée (snooze actif jusqu'au {Until:dd/MM/yyyy HH:mm} UTC) : {Title}", PushoverSnooze.SnoozeUntil, title);
+                            return;
+                        }
 
-            var data = new Dictionary<string, string>
-            {
-                ["token"] = Environment.GetEnvironmentVariable("PUSHOVER_TOKEN")!,
-                ["user"] = Environment.GetEnvironmentVariable("PUSHOVER_USER")!,
-                ["title"] = title,
-                ["message"] = message,
-                ["priority"] = priority.ToString()
-            };
+                        try
+                        {
+                            using var client = new HttpClient();
 
-            if (priority == 2)
-            {
-                data["retry"] = "30";
-                data["expire"] = "300";
-            }
+                            var data = new Dictionary<string, string>
+                            {
+                                ["token"] = Environment.GetEnvironmentVariable("PUSHOVER_TOKEN")!,
+                                ["user"] = Environment.GetEnvironmentVariable("PUSHOVER_USER")!,
+                                ["title"] = title,
+                                ["message"] = message,
+                                ["priority"] = priority.ToString()
+                            };
 
-            var response = await client.PostAsync("https://api.pushover.net/1/messages.json",
-                new FormUrlEncodedContent(data));
+                            if (priority == 2)
+                            {
+                                data["retry"] = "30";
+                                data["expire"] = "300";
+                            }
 
-            _logger.LogDebug("Notification Pushover envoyée : {Title} (HTTP {StatusCode})", title, (int)response.StatusCode);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Échec de l'envoi de la notification Pushover : {Title}", title);
-        }
-    }
-}
+                            var response = await client.PostAsync("https://api.pushover.net/1/messages.json",
+                                new FormUrlEncodedContent(data), ct);
+
+                            _logger.LogDebug("Notification Pushover envoyée : {Title} (HTTP {StatusCode})", title, (int)response.StatusCode);
+
+                            if (priority == 2 && response.IsSuccessStatusCode)
+                            {
+                                var json = await response.Content.ReadAsStringAsync(ct);
+                                var doc = JsonDocument.Parse(json);
+                                if (doc.RootElement.TryGetProperty("receipt", out var receiptProp))
+                                {
+                                    var receipt = receiptProp.GetString();
+                                    if (!string.IsNullOrEmpty(receipt))
+                                        PushoverSnooze.StartWatching(receipt, _logger, ct);
+                                }
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogError(ex, "Échec de l'envoi de la notification Pushover : {Title}", title);
+                        }
+                    }
+                }
+
+                static class PushoverSnooze
+                {
+                    private const string SnoozeFile = "snooze.dat";
+                    private static DateTime _snoozeUntil = LoadSnooze();
+
+                    public static DateTime SnoozeUntil => _snoozeUntil;
+                    public static bool IsSnoozed => DateTime.UtcNow < _snoozeUntil;
+
+                    private static int SnoozeDays =>
+                        int.TryParse(Environment.GetEnvironmentVariable("SNOOZE_DAYS"), out var d) && d > 0 ? d : 1;
+
+                    private static DateTime LoadSnooze()
+                    {
+                        try
+                        {
+                            if (File.Exists(SnoozeFile))
+                            {
+                                var text = File.ReadAllText(SnoozeFile).Trim();
+                                if (DateTime.TryParse(text, null, System.Globalization.DateTimeStyles.RoundtripKind, out var dt))
+                                    return dt;
+                            }
+                        }
+                        catch { }
+                        return DateTime.MinValue;
+                    }
+
+                    private static void SaveSnooze(DateTime until)
+                    {
+                        try { File.WriteAllText(SnoozeFile, until.ToString("O")); }
+                        catch { }
+                    }
+
+                    public static void StartWatching(string receipt, ILogger logger, CancellationToken ct)
+                    {
+                        _ = Task.Run(() => WatchAsync(receipt, logger, ct), CancellationToken.None);
+                    }
+
+                    private static async Task WatchAsync(string receipt, ILogger logger, CancellationToken ct)
+                    {
+                        var token = Environment.GetEnvironmentVariable("PUSHOVER_TOKEN")!;
+                        var url = $"https://api.pushover.net/1/receipts/{receipt}.json?token={token}";
+                        var deadline = DateTime.UtcNow.AddSeconds(300);
+
+                        using var client = new HttpClient();
+
+                        while (!ct.IsCancellationRequested && DateTime.UtcNow < deadline)
+                        {
+                            try
+                            {
+                                await Task.Delay(TimeSpan.FromSeconds(30), ct);
+
+                                var json = await client.GetStringAsync(url, ct);
+                                var doc = JsonDocument.Parse(json);
+
+                                if (doc.RootElement.TryGetProperty("acknowledged", out var ackProp) && ackProp.GetInt32() == 1)
+                                {
+                                    _snoozeUntil = DateTime.UtcNow.AddDays(SnoozeDays);
+                                    SaveSnooze(_snoozeUntil);
+                                    logger.LogInformation("🔕 Notification acquittée — notifications suspendues jusqu'au {Until:dd/MM/yyyy HH:mm} UTC", _snoozeUntil);
+                                    return;
+                                }
+                            }
+                            catch (OperationCanceledException) { return; }
+                            catch (Exception ex)
+                            {
+                                logger.LogDebug(ex, "Impossible de vérifier le reçu Pushover {Receipt}", receipt);
+                            }
+                        }
+                    }
+                }
