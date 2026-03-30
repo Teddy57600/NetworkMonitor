@@ -1,5 +1,6 @@
 ﻿using System.Net.NetworkInformation;
 using System.Net.Http;
+using System.Net.Sockets;
 using Cronos;
 using Microsoft.Extensions.Logging;
 
@@ -24,6 +25,9 @@ internal class Program
         var monitors = ips.ToDictionary(
             ip => ip,
             ip => new MonitorState(ip, loggerFactory.CreateLogger<MonitorState>()));
+        var tcpMonitors = ParseTcpTargets()
+            .Select(t => new TcpPortMonitorState(t.Host, t.Port, loggerFactory.CreateLogger<TcpPortMonitorState>()))
+            .ToList();
         var schedule = BuildSchedule();
 
         logger.LogInformation("NetworkMonitor démarré — {Schedule}", schedule.Description);
@@ -36,6 +40,9 @@ internal class Program
             foreach (var monitor in monitors.Values)
                 await monitor.Check();
 
+            foreach (var tcpMonitor in tcpMonitors)
+                await tcpMonitor.Check();
+
             try
             {
                 await schedule.WaitForNextAsync(cts.Token);
@@ -47,6 +54,21 @@ internal class Program
         }
 
         logger.LogInformation("NetworkMonitor arrêté.");
+    }
+
+    static IReadOnlyList<(string Host, int Port)> ParseTcpTargets()
+    {
+        var raw = Environment.GetEnvironmentVariable("TCP_TARGETS");
+        if (string.IsNullOrWhiteSpace(raw)) return [];
+
+        var targets = new List<(string, int)>();
+        foreach (var entry in raw.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            var lastColon = entry.LastIndexOf(':');
+            if (lastColon > 0 && int.TryParse(entry[(lastColon + 1)..], out var port))
+                targets.Add((entry[..lastColon], port));
+        }
+        return targets;
     }
 
     static ISchedule BuildSchedule()
@@ -183,6 +205,127 @@ class MonitorState
             catch (Exception ex)
             {
                 _logger.LogDebug(ex, "Ping {Ip} — tentative {Attempt}/3 : exception", _ip, i + 1);
+            }
+
+            await Task.Delay(1000);
+        }
+
+        return false;
+    }
+
+    private async Task Send(string title, string message, int priority)
+    {
+        try
+        {
+            using var client = new HttpClient();
+
+            var data = new Dictionary<string, string>
+            {
+                ["token"] = Environment.GetEnvironmentVariable("PUSHOVER_TOKEN")!,
+                ["user"] = Environment.GetEnvironmentVariable("PUSHOVER_USER")!,
+                ["title"] = title,
+                ["message"] = message,
+                ["priority"] = priority.ToString()
+            };
+
+            if (priority == 2)
+            {
+                data["retry"] = "30";
+                data["expire"] = "300";
+            }
+
+            var response = await client.PostAsync("https://api.pushover.net/1/messages.json",
+                new FormUrlEncodedContent(data));
+
+            _logger.LogDebug("Notification Pushover envoyée : {Title} (HTTP {StatusCode})", title, (int)response.StatusCode);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Échec de l'envoi de la notification Pushover : {Title}", title);
+        }
+    }
+}
+
+class TcpPortMonitorState
+{
+    private readonly string _host;
+    private readonly int _port;
+    private readonly ILogger _logger;
+    private int _failCount = 0;
+    private bool _isDown = false;
+    private DateTime? _downSince = null;
+    private DateTime _lastCheckAllowed = DateTime.UtcNow;
+
+    public TcpPortMonitorState(string host, int port, ILogger logger)
+    {
+        _host = host;
+        _port = port;
+        _logger = logger;
+    }
+
+    public async Task Check()
+    {
+        // Circuit breaker OPEN
+        if (DateTime.UtcNow < _lastCheckAllowed)
+        {
+            _logger.LogDebug("Circuit breaker ouvert pour {Host}:{Port}, prochain essai à {Time:HH:mm:ss}", _host, _port, _lastCheckAllowed);
+            return;
+        }
+
+        bool success = await TcpCheckWithRetry();
+
+        if (!success)
+        {
+            _failCount++;
+
+            if (!_isDown)
+            {
+                _isDown = true;
+                _downSince = DateTime.UtcNow;
+
+                _logger.LogWarning("🔴 DOWN : {Host}:{Port} inaccessible après {Count} tentatives", _host, _port, _failCount * 3);
+                await Send("🔴 DOWN", $"Port TCP {_port} ({_host}) KO", 1);
+
+                // ouvre circuit pendant 1 min
+                _lastCheckAllowed = DateTime.UtcNow.AddMinutes(1);
+            }
+            else if (_isDown && _downSince.HasValue &&
+                     (DateTime.UtcNow - _downSince.Value).TotalMinutes > 5)
+            {
+                _logger.LogError("🚨 STILL DOWN : {Host}:{Port} toujours KO depuis {Minutes:F0} min", _host, _port, (DateTime.UtcNow - _downSince.Value).TotalMinutes);
+                await Send("🚨 STILL DOWN", $"Port TCP {_port} ({_host}) toujours KO", 2);
+
+                _downSince = DateTime.UtcNow;
+            }
+        }
+        else
+        {
+            if (_isDown)
+            {
+                _logger.LogInformation("🟢 RECOVERY : {Host}:{Port} de nouveau accessible", _host, _port);
+                await Send("🟢 RECOVERY", $"Port TCP {_port} ({_host}) OK", 0);
+            }
+
+            _logger.LogInformation("TCP {Host}:{Port} est UP", _host, _port);
+            _failCount = 0;
+            _isDown = false;
+        }
+    }
+
+    private async Task<bool> TcpCheckWithRetry()
+    {
+        for (int i = 0; i < 3; i++)
+        {
+            try
+            {
+                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+                using var client = new TcpClient();
+                await client.ConnectAsync(_host, _port, cts.Token);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogDebug("TCP {Host}:{Port} — tentative {Attempt}/3 : exception", _host, _port, i + 1);
             }
 
             await Task.Delay(1000);

@@ -46,7 +46,9 @@ COPY --from=publish /app/publish .
 
 ENV PUSHOVER_TOKEN=""
 ENV PUSHOVER_USER=""
+ENV SCHEDULE_INTERVAL_SECONDS =""
+ENV SCHEDULE_CRON = "*/3 * * * *"   # Toutes les 3 minutes par défaut
 
 ENTRYPOINT ["./NetworkMonitor"]
 
-LABEL Version="1.0.0"
+LABEL Version="1.1.0"

@@ -13,7 +13,8 @@
       "environmentVariables": {
         "PUSHOVER_TOKEN": "anna3ro3b61vbawaogqmv1anpos68s",
         "PUSHOVER_USER": "uzcqymfguiaf148p8jj8h3b91y657z",
-        "SCHEDULE_INTERVAL_SECONDS": "30"
+        "SCHEDULE_INTERVAL_SECONDS": "30",
+        "TCP_TARGETS": "89.187.7.222:25,89.187.7.222:33"
       }
     }
   }
