@@ -1,0 +1,18 @@
+services:
+  networkmonitor:
+    build:
+      context: .
+      dockerfile: NetworkMonitor/Dockerfile
+    restart: unless-stopped
+    environment:
+      PUSHOVER_TOKEN: ""
+      PUSHOVER_USER: ""
+      SCHEDULE_CRON: "*/3 * * * *"
+      SNOOZE_DAYS: "1"
+      DATA_DIR: /data
+      # TCP_TARGETS: "host1:443,host2:80"
+    volumes:
+      - networkmonitor-data:/data
+
+volumes:
+  networkmonitor-data:

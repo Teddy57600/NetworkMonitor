@@ -20,7 +20,7 @@ internal class Program
             builder
                 .SetMinimumLevel(LogLevel.Debug)
                 .AddSimpleConsole(o => o.TimestampFormat = "dd/MM/yyyy HH:mm:ss ")
-                .AddProvider(new FileLoggerProvider("logs")));
+                .AddProvider(new FileLoggerProvider(Path.Combine(StateStore.DataDir, "logs"))));
 
         var logger = loggerFactory.CreateLogger<Program>();
         var monitors = ips.ToDictionary(
@@ -138,6 +138,12 @@ class MonitorState
     {
         _ip = ip;
         _logger = logger;
+        var snapshot = StateStore.GetMonitor(ip);
+        if (snapshot?.IsDown == true)
+        {
+            _isDown = true;
+            _downSince = snapshot.DownSince;
+        }
     }
 
     public async Task Check(CancellationToken ct = default)
@@ -165,6 +171,7 @@ class MonitorState
 
                 // ouvre circuit pendant 1 min
                 _lastCheckAllowed = DateTime.UtcNow.AddMinutes(1);
+                StateStore.SetMonitor(_ip, new MonitorSnapshot { IsDown = true, DownSince = _downSince });
             }
             else if (_isDown && _downSince.HasValue &&
                      (DateTime.UtcNow - _downSince.Value).TotalMinutes > 5)
@@ -186,6 +193,7 @@ class MonitorState
             _logger.LogInformation("IP {Ip} est UP", _ip);
             _failCount = 0;
             _isDown = false;
+            StateStore.SetMonitor(_ip, new MonitorSnapshot { IsDown = false });
         }
     }
 
@@ -280,6 +288,12 @@ class TcpPortMonitorState
         _host = host;
         _port = port;
         _logger = logger;
+        var snapshot = StateStore.GetMonitor($"{host}:{port}");
+        if (snapshot?.IsDown == true)
+        {
+            _isDown = true;
+            _downSince = snapshot.DownSince;
+        }
     }
 
     public async Task Check(CancellationToken ct = default)
@@ -307,6 +321,7 @@ class TcpPortMonitorState
 
                 // ouvre circuit pendant 1 min
                 _lastCheckAllowed = DateTime.UtcNow.AddMinutes(1);
+                StateStore.SetMonitor($"{_host}:{_port}", new MonitorSnapshot { IsDown = true, DownSince = _downSince });
             }
             else if (_isDown && _downSince.HasValue &&
                      (DateTime.UtcNow - _downSince.Value).TotalMinutes > 5)
@@ -328,6 +343,7 @@ class TcpPortMonitorState
             _logger.LogInformation("TCP {Host}:{Port} est UP", _host, _port);
             _failCount = 0;
             _isDown = false;
+            StateStore.SetMonitor($"{_host}:{_port}", new MonitorSnapshot { IsDown = false });
         }
     }
 
@@ -406,35 +422,13 @@ class TcpPortMonitorState
 
                 static class PushoverSnooze
                 {
-                    private const string SnoozeFile = "snooze.dat";
-                    private static DateTime _snoozeUntil = LoadSnooze();
+                    private static DateTime _snoozeUntil = StateStore.SnoozeUntil;
 
                     public static DateTime SnoozeUntil => _snoozeUntil;
                     public static bool IsSnoozed => DateTime.UtcNow < _snoozeUntil;
 
                     private static int SnoozeDays =>
                         int.TryParse(Environment.GetEnvironmentVariable("SNOOZE_DAYS"), out var d) && d > 0 ? d : 1;
-
-                    private static DateTime LoadSnooze()
-                    {
-                        try
-                        {
-                            if (File.Exists(SnoozeFile))
-                            {
-                                var text = File.ReadAllText(SnoozeFile).Trim();
-                                if (DateTime.TryParse(text, null, System.Globalization.DateTimeStyles.RoundtripKind, out var dt))
-                                    return dt;
-                            }
-                        }
-                        catch { }
-                        return DateTime.MinValue;
-                    }
-
-                    private static void SaveSnooze(DateTime until)
-                    {
-                        try { File.WriteAllText(SnoozeFile, until.ToString("O")); }
-                        catch { }
-                    }
 
                     public static void StartWatching(string receipt, ILogger logger, CancellationToken ct)
                     {
@@ -461,7 +455,7 @@ class TcpPortMonitorState
                                 if (doc.RootElement.TryGetProperty("acknowledged", out var ackProp) && ackProp.GetInt32() == 1)
                                 {
                                     _snoozeUntil = DateTime.UtcNow.AddDays(SnoozeDays);
-                                    SaveSnooze(_snoozeUntil);
+                                    StateStore.SetSnooze(_snoozeUntil);
                                     logger.LogInformation("🔕 Notification acquittée — notifications suspendues jusqu'au {Until:dd/MM/yyyy HH:mm} UTC", _snoozeUntil);
                                     return;
                                 }

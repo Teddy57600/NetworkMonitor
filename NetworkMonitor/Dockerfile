@@ -48,6 +48,9 @@ ENV PUSHOVER_TOKEN=""
 ENV PUSHOVER_USER=""
 ENV SCHEDULE_INTERVAL_SECONDS =""
 ENV SCHEDULE_CRON = "*/3 * * * *"   # Toutes les 3 minutes par défaut
+ENV DATA_DIR=/data
+
+VOLUME /data
 
 ENTRYPOINT ["./NetworkMonitor"]
 
