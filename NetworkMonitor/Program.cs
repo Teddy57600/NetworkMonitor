@@ -112,7 +112,7 @@ class CronSchedule : ISchedule
             : CronExpression.Parse(expression);
     }
 
-    public string Description => $"CRON \"{_expression}\"";
+    public string Description => CronDescription.ToFrench(_expression);
 
     public async Task WaitForNextAsync(CancellationToken ct)
     {

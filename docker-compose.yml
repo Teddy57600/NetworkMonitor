@@ -16,3 +16,4 @@ services:
 
 volumes:
   networkmonitor-data:
+    name: networkmonitor-data
