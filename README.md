@@ -23,6 +23,7 @@ Elle permet de :
 - surveiller une ou plusieurs **adresses IP** via `ping`
 - surveiller un ou plusieurs **services TCP** via `host:port`
 - déclencher des **notifications Pushover** lors d'une panne, d'une reprise et d'une indisponibilité prolongée
+- envoyer une **notification Pushover au démarrage et à l'arrêt** du service
 - **mémoriser l'état** des cibles dans un stockage persistant
 - produire des **logs console + fichiers**
 - piloter la fréquence d'exécution via **intervalle** ou **expression CRON**
@@ -48,6 +49,8 @@ Le projet cible **.NET 11** et active la **publication AOT** pour des déploieme
 
 ### Alerting intelligent
 - Notifications **Pushover** avec niveaux de priorité adaptés
+- Notification de **démarrage** avec son dédié configurable
+- Notification d'**arrêt** avec son dédié configurable et motif de terminaison
 - Relance en **urgence** si un incident dure dans le temps
 - Mécanisme de **snooze automatique** lorsqu'une alerte urgente est acquittée
 
@@ -114,9 +117,11 @@ La configuration se fait uniquement par **variables d'environnement**.
 | `SCHEDULE_CRON` | Expression CRON pour planifier les vérifications | `*/3 * * * *` | non définie |
 | `PUSHOVER_TOKEN` | Token d'application Pushover | `xxxxx` | vide |
 | `PUSHOVER_USER` | Clé utilisateur ou groupe Pushover | `xxxxx` | vide |
+| `PUSHOVER_STARTUP_SOUND` | Son Pushover utilisé pour la notification de démarrage | `cosmic` | `cosmic` |
+| `PUSHOVER_SHUTDOWN_SOUND` | Son Pushover utilisé pour la notification d'arrêt | `falling` | `falling` |
 | `SNOOZE_DAYS` | Nombre de jours de suspension après acquittement d'une alerte urgente | `1` | `1` |
 | `DATA_DIR` | Répertoire de persistance (`state.json`, logs) | `/data` | `.` |
-| `APP_VERSION` | Version affichée dans les logs / conteneur | `1.4.1` | `inconnue` |
+| `APP_VERSION` | Version affichée dans les logs / conteneur | `1.4.4` | `inconnue` |
 
 ### Priorité entre intervalle et CRON
 
@@ -154,6 +159,27 @@ Lorsqu'une notification urgente est acquittée côté Pushover :
 - l'application détecte l'acquittement via le `receipt`
 - les notifications sont suspendues pendant `SNOOZE_DAYS`
 - la date de fin de snooze est persistée dans le stockage d'état
+
+### Notifications de cycle de vie
+Au démarrage du programme :
+
+- une notification `🚀 NetworkMonitor démarré` est envoyée
+- le message contient la version, le rythme d'exécution et le nombre de cibles surveillées
+- le son utilisé est `PUSHOVER_STARTUP_SOUND` (par défaut : `cosmic`)
+
+À l'arrêt du programme :
+
+- une notification `🛑 NetworkMonitor arrêté` est envoyée
+- le message contient le **motif d'arrêt** lorsque celui-ci est connu
+- le son utilisé est `PUSHOVER_SHUTDOWN_SOUND` (par défaut : `falling`)
+
+Motifs d'arrêt actuellement distingués :
+
+- arrêt normal
+- arrêt manuel demandé depuis la console
+- interruption terminal (`SIGINT`)
+- arrêt Docker / système (`SIGTERM`)
+- exception inattendue
 
 ---
 
@@ -237,11 +263,15 @@ docker run -d \
   -e SCHEDULE_CRON="*/3 * * * *" \
   -e PUSHOVER_TOKEN="your-token" \
   -e PUSHOVER_USER="your-user" \
+  -e PUSHOVER_STARTUP_SOUND="cosmic" \
+  -e PUSHOVER_SHUTDOWN_SOUND="falling" \
   -e SNOOZE_DAYS="1" \
   -e DATA_DIR="/data" \
   -v networkmonitor-data:/data \
   networkmonitor
 ```
+
+> Sous Docker, l'arrêt via `docker stop` envoie un `SIGTERM`. L'application intercepte ce signal pour effectuer un arrêt propre et envoyer la notification Pushover de fin.
 
 ### Exemple Docker Compose
 
@@ -257,9 +287,11 @@ services:
       SCHEDULE_CRON: "*/3 * * * *"
       PUSHOVER_TOKEN: "your-token"
       PUSHOVER_USER: "your-user"
+      PUSHOVER_STARTUP_SOUND: "cosmic"
+      PUSHOVER_SHUTDOWN_SOUND: "falling"
       SNOOZE_DAYS: "1"
       DATA_DIR: "/data"
-      APP_VERSION: "1.4.1"
+      APP_VERSION: "1.4.4"
     volumes:
       - networkmonitor-data:/data
 

@@ -1,13 +1,18 @@
-﻿using Microsoft.Extensions.Logging;
+﻿using System.Runtime.InteropServices;
+using Microsoft.Extensions.Logging;
 
 namespace NetworkMonitor;
 
 internal class Program
 {
+    private const string DefaultStartupSound = "cosmic";
+    private const string DefaultShutdownSound = "falling";
+
     static async Task Main(string[] args)
     {
         var ips = ParsePingTargets();
         var version = GetApplicationVersion();
+        var shutdownReason = "arrêt normal";
 
         using var loggerFactory = LoggerFactory.Create(builder =>
             builder
@@ -31,30 +36,64 @@ internal class Program
 
         var schedule = BuildSchedule();
 
-        logger.LogInformation("NetworkMonitor démarré — version {Version} — {Schedule}", version, schedule.Description);
-
         using var cts = new CancellationTokenSource();
-        Console.CancelKeyPress += (_, e) => { e.Cancel = true; cts.Cancel(); };
-
-        while (!cts.Token.IsCancellationRequested)
+        Console.CancelKeyPress += (_, e) =>
         {
-            foreach (var monitor in monitors.Values)
-                await monitor.Check(cts.Token);
+            e.Cancel = true;
+            shutdownReason = "arrêt manuel demandé depuis la console";
+            cts.Cancel();
+        };
+        using var sigTermRegistration = RegisterShutdownSignal(PosixSignal.SIGTERM, "arrêt Docker / système (SIGTERM)", cts, logger, reason => shutdownReason = reason);
+        using var sigIntRegistration = RegisterShutdownSignal(PosixSignal.SIGINT, "interruption terminal (SIGINT)", cts, logger, reason => shutdownReason = reason);
 
-            foreach (var tcpMonitor in tcpMonitors)
-                await tcpMonitor.Check(cts.Token);
+        logger.LogInformation("NetworkMonitor démarré — version {Version} — {Schedule}", version, schedule.Description);
+        await PushoverClient.SendAsync(
+            "🚀 NetworkMonitor démarré",
+            BuildLifecycleMessage("✨ Service opérationnel", version, schedule.Description, ips.Count, tcpMonitors.Count),
+            0,
+            logger,
+            cts.Token,
+            GetStartupPushoverSound(),
+            html: true);
 
-            try
+        try
+        {
+            while (!cts.Token.IsCancellationRequested)
             {
-                await schedule.WaitForNextAsync(cts.Token);
-            }
-            catch (OperationCanceledException)
-            {
-                break;
+                foreach (var monitor in monitors.Values)
+                    await monitor.Check(cts.Token);
+
+                foreach (var tcpMonitor in tcpMonitors)
+                    await tcpMonitor.Check(cts.Token);
+
+                try
+                {
+                    await schedule.WaitForNextAsync(cts.Token);
+                }
+                catch (OperationCanceledException)
+                {
+                    break;
+                }
             }
         }
-
-        logger.LogInformation("NetworkMonitor arrêté.");
+        catch (Exception ex)
+        {
+            shutdownReason = $"erreur inattendue : {ex.GetType().Name}";
+            logger.LogError(ex, "Arrêt du programme suite à une exception non gérée.");
+            throw;
+        }
+        finally
+        {
+            logger.LogInformation("NetworkMonitor arrêté. Motif : {Reason}", shutdownReason);
+            await PushoverClient.SendAsync(
+                "🛑 NetworkMonitor arrêté",
+                BuildLifecycleMessage("🌙 Service arrêté", version, schedule.Description, ips.Count, tcpMonitors.Count, shutdownReason),
+                0,
+                logger,
+                CancellationToken.None,
+                GetShutdownPushoverSound(),
+                html: true);
+        }
     }
 
     private static IReadOnlyList<string> ParsePingTargets()
@@ -99,5 +138,44 @@ internal class Program
     {
         var version = Environment.GetEnvironmentVariable("APP_VERSION");
         return string.IsNullOrWhiteSpace(version) ? "inconnue" : version;
+    }
+
+    private static string BuildLifecycleMessage(string status, string version, string scheduleDescription, int ipCount, int tcpCount, string? shutdownReason = null)
+    {
+        var reasonLine = string.IsNullOrWhiteSpace(shutdownReason)
+            ? string.Empty
+            : $"\n📍 Motif : {shutdownReason}";
+
+        return $"<b>{status}</b>\n📦 Version : {version}\n🕒 Rythme : {scheduleDescription}\n🖧 IP surveillées : {ipCount}\n🔌 Ports TCP surveillés : {tcpCount}{reasonLine}";
+    }
+
+    private static string GetStartupPushoverSound()
+    {
+        var sound = Environment.GetEnvironmentVariable("PUSHOVER_STARTUP_SOUND");
+        return string.IsNullOrWhiteSpace(sound) ? DefaultStartupSound : sound;
+    }
+
+    private static string GetShutdownPushoverSound()
+    {
+        var sound = Environment.GetEnvironmentVariable("PUSHOVER_SHUTDOWN_SOUND");
+        return string.IsNullOrWhiteSpace(sound) ? DefaultShutdownSound : sound;
+    }
+
+    private static PosixSignalRegistration? RegisterShutdownSignal(PosixSignal signal, string reason, CancellationTokenSource cts, ILogger logger, Action<string> setShutdownReason)
+    {
+        if (!OperatingSystem.IsLinux() && !OperatingSystem.IsMacOS())
+            return null;
+
+        return PosixSignalRegistration.Create(signal, context =>
+        {
+            context.Cancel = true;
+
+            if (cts.IsCancellationRequested)
+                return;
+
+            setShutdownReason(reason);
+            logger.LogInformation("Signal {Signal} reçu, arrêt propre en cours. Motif : {Reason}", context.Signal, reason);
+            cts.Cancel();
+        });
     }
 }

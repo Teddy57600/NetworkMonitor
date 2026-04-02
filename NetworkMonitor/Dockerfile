@@ -46,6 +46,8 @@ COPY --from=publish /app/publish .
 
 ENV PUSHOVER_TOKEN=""
 ENV PUSHOVER_USER=""
+ENV PUSHOVER_STARTUP_SOUND="cosmic"
+ENV PUSHOVER_SHUTDOWN_SOUND="falling"
 ENV PING_TARGETS=""
 ENV SCHEDULE_INTERVAL_SECONDS =""
 ENV SCHEDULE_CRON = "*/3 * * * *"   # Toutes les 3 minutes par défaut
@@ -55,5 +57,5 @@ VOLUME /data
 
 ENTRYPOINT ["./NetworkMonitor"]
 
-ENV APP_VERSION="1.4.1"
-LABEL Version="1.4.1"
+ENV APP_VERSION="1.4.4"
+LABEL Version="1.4.4"

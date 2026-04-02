@@ -5,7 +5,7 @@ namespace NetworkMonitor;
 
 static class PushoverClient
 {
-    public static async Task SendAsync(string title, string message, int priority, ILogger logger, CancellationToken ct = default)
+    public static async Task SendAsync(string title, string message, int priority, ILogger logger, CancellationToken ct = default, string? sound = null, bool html = false)
     {
         if (PushoverSnooze.IsSnoozed)
         {
@@ -25,6 +25,12 @@ static class PushoverClient
                 ["message"] = message,
                 ["priority"] = priority.ToString()
             };
+
+            if (!string.IsNullOrWhiteSpace(sound))
+                data["sound"] = sound;
+
+            if (html)
+                data["html"] = "1";
 
             if (priority == 2)
             {
