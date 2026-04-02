@@ -54,4 +54,4 @@ VOLUME /data
 
 ENTRYPOINT ["./NetworkMonitor"]
 
-LABEL Version="1.1.0"
+LABEL Version="1.2.0"

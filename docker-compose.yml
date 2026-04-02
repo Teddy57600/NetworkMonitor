@@ -12,8 +12,5 @@ services:
       DATA_DIR: /data
       # TCP_TARGETS: "host1:443,host2:80"
     volumes:
-      - networkmonitor-data:/data
+      - /root/data:/data
 
-volumes:
-  networkmonitor-data:
-    name: networkmonitor-data
