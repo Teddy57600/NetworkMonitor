@@ -34,12 +34,51 @@ function Execute-Command {
     }
 }
 
+function Update-DockerfileVersion {
+    param (
+        [string]$DockerfilePath,
+        [string]$Version
+    )
+
+    if (-not (Test-Path -Path $DockerfilePath)) {
+        Write-Error "Dockerfile introuvable: $DockerfilePath"
+        exit 1
+    }
+
+    $dockerfileContent = Get-Content -Path $DockerfilePath -Raw
+    $updatedContent = [regex]::Replace(
+        $dockerfileContent,
+        '(?m)^ENV\s+APP_VERSION="[^"]*"\s*$',
+        "ENV APP_VERSION=`"$Version`"",
+        1
+    )
+
+    $updatedContent = [regex]::Replace(
+        $updatedContent,
+        '(?m)^LABEL\s+Version="[^"]*"\s*$',
+        "LABEL Version=`"$Version`"",
+        1
+    )
+
+    if ($updatedContent -eq $dockerfileContent) {
+        Write-Error "Aucun ENV APP_VERSION ou LABEL Version n'a été trouvé dans le Dockerfile: $DockerfilePath"
+        exit 1
+    }
+
+    Set-Content -Path $DockerfilePath -Value $updatedContent
+    Write-Host "Version du Dockerfile mise à jour: $Version" -ForegroundColor Yellow
+}
+
 # Définir le nom de l'image
 $imageName = "alethi/networkmonitor-tal"
+$dockerfilePath = Join-Path $PSScriptRoot "Dockerfile"
+
+# Mettre à jour la version dans le Dockerfile avant le build
+Update-DockerfileVersion -DockerfilePath $dockerfilePath -Version $Version
 
 # Construire l'image Docker avec le numéro de version
 $solutionRoot = Split-Path $PSScriptRoot -Parent
-$buildCommand = "docker build --network=host -t ${imageName}:${Version} -f `"$PSScriptRoot\Dockerfile`" `"$solutionRoot`""
+$buildCommand = "docker build --network=host -t ${imageName}:${Version} -f `"$dockerfilePath`" `"$solutionRoot`""
 Execute-Command -Command $buildCommand
 
 # Tagger l'image avec "latest"
