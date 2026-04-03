@@ -61,10 +61,13 @@ static class StateStore
             if (File.Exists(FilePath))
             {
                 var json = File.ReadAllText(FilePath);
-                return JsonSerializer.Deserialize<AppState>(json) ?? new AppState();
+                return JsonSerializer.Deserialize(json, AppStateJsonContext.Default.AppState) ?? new AppState();
             }
         }
-        catch { }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"[StateStore] Échec du chargement de {FilePath} : {ex.Message}");
+        }
         return new AppState();
     }
 
@@ -73,12 +76,19 @@ static class StateStore
         try
         {
             Directory.CreateDirectory(DataDir);
-            var json = JsonSerializer.Serialize(_state, new JsonSerializerOptions { WriteIndented = true });
+            var json = JsonSerializer.Serialize(_state, AppStateJsonContext.Default.AppState);
             File.WriteAllText(FilePath, json);
         }
-        catch { }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"[StateStore] Échec de la sauvegarde dans {FilePath} : {ex.Message}");
+        }
     }
 }
+
+[JsonSourceGenerationOptions(WriteIndented = true)]
+[JsonSerializable(typeof(AppState))]
+internal partial class AppStateJsonContext : JsonSerializerContext { }
 
 sealed class AppState
 {
