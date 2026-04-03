@@ -45,7 +45,7 @@ class MonitorState
                 _downSince = DateTime.UtcNow;
 
                 _logger.LogWarning("🔴 DOWN : IP {Ip} injoignable après {Count} échecs consécutifs", _ip, _failCount);
-                await PushoverClient.SendAsync("🔴 DOWN", $"IP {_ip} KO", 1, _logger, ct);
+                await PushoverClient.SendAsync("🔴 DOWN", $"IP {_ip} KO", 1, _ip, _logger, ct);
 
                 // ouvre circuit pendant 1 min
                 _lastCheckAllowed = DateTime.UtcNow.AddMinutes(1);
@@ -55,7 +55,7 @@ class MonitorState
                      (DateTime.UtcNow - _downSince.Value).TotalMinutes > 5)
             {
                 _logger.LogError("🚨 STILL DOWN : IP {Ip} toujours KO depuis {Minutes:F0} min", _ip, (DateTime.UtcNow - _downSince.Value).TotalMinutes);
-                await PushoverClient.SendAsync("🚨 STILL DOWN", $"IP {_ip} toujours KO", 2, _logger, ct);
+                await PushoverClient.SendAsync("🚨 STILL DOWN", $"IP {_ip} toujours KO", 2, _ip, _logger, ct);
 
                 _downSince = DateTime.UtcNow;
             }
@@ -65,7 +65,7 @@ class MonitorState
             if (_isDown)
             {
                 _logger.LogInformation("🟢 RECOVERY : IP {Ip} de nouveau joignable", _ip);
-                await PushoverClient.SendAsync("🟢 RECOVERY", $"IP {_ip} OK", 0, _logger, ct);
+                await PushoverClient.SendAsync("🟢 RECOVERY", $"IP {_ip} OK", 0, _ip, _logger, ct);
             }
 
             _logger.LogInformation("IP {Ip} est UP", _ip);

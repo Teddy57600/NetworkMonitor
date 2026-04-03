@@ -47,7 +47,7 @@ class TcpPortMonitorState
                 _downSince = DateTime.UtcNow;
 
                 _logger.LogWarning("🔴 DOWN : {Host}:{Port} inaccessible après {Count} tentatives", _host, _port, _failCount * 3);
-                await PushoverClient.SendAsync("🔴 DOWN", $"Port TCP {_port} ({_host}) KO", 1, _logger, ct);
+                await PushoverClient.SendAsync("🔴 DOWN", $"Port TCP {_port} ({_host}) KO", 1, $"{_host}:{_port}", _logger, ct);
 
                 // ouvre circuit pendant 1 min
                 _lastCheckAllowed = DateTime.UtcNow.AddMinutes(1);
@@ -57,7 +57,7 @@ class TcpPortMonitorState
                      (DateTime.UtcNow - _downSince.Value).TotalMinutes > 5)
             {
                 _logger.LogError("🚨 STILL DOWN : {Host}:{Port} toujours KO depuis {Minutes:F0} min", _host, _port, (DateTime.UtcNow - _downSince.Value).TotalMinutes);
-                await PushoverClient.SendAsync("🚨 STILL DOWN", $"Port TCP {_port} ({_host}) toujours KO", 2, _logger, ct);
+                await PushoverClient.SendAsync("🚨 STILL DOWN", $"Port TCP {_port} ({_host}) toujours KO", 2, $"{_host}:{_port}", _logger, ct);
 
                 _downSince = DateTime.UtcNow;
             }
@@ -67,7 +67,7 @@ class TcpPortMonitorState
             if (_isDown)
             {
                 _logger.LogInformation("🟢 RECOVERY : {Host}:{Port} de nouveau accessible", _host, _port);
-                await PushoverClient.SendAsync("🟢 RECOVERY", $"Port TCP {_port} ({_host}) OK", 0, _logger, ct);
+                await PushoverClient.SendAsync("🟢 RECOVERY", $"Port TCP {_port} ({_host}) OK", 0, $"{_host}:{_port}", _logger, ct);
             }
 
             _logger.LogInformation("TCP {Host}:{Port} est UP", _host, _port);

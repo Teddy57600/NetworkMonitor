@@ -14,17 +14,27 @@ static class StateStore
     private static readonly object _lock = new();
     private static AppState _state = Load();
 
-    public static DateTime SnoozeUntil
+    public static DateTime GetSnoozeUntil(string key)
     {
-        get { lock (_lock) return _state.SnoozeUntil; }
+        lock (_lock)
+            return _state.Snooze.TryGetValue(key, out var dt) ? dt : DateTime.MinValue;
     }
 
-    public static void SetSnooze(DateTime until)
+    public static void SetSnooze(string key, DateTime until)
     {
         lock (_lock)
         {
-            _state.SnoozeUntil = until;
+            _state.Snooze[key] = until;
             Save();
+        }
+    }
+
+    public static void ClearSnooze(string key)
+    {
+        lock (_lock)
+        {
+            if (_state.Snooze.Remove(key))
+                Save();
         }
     }
 
@@ -72,8 +82,8 @@ static class StateStore
 
 sealed class AppState
 {
-    [JsonPropertyName("snoozeUntil")]
-    public DateTime SnoozeUntil { get; set; } = DateTime.MinValue;
+    [JsonPropertyName("snooze")]
+    public Dictionary<string, DateTime> Snooze { get; set; } = new();
 
     [JsonPropertyName("monitors")]
     public Dictionary<string, MonitorSnapshot> Monitors { get; set; } = new();

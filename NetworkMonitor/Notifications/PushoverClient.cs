@@ -5,11 +5,13 @@ namespace NetworkMonitor;
 
 static class PushoverClient
 {
-    public static async Task SendAsync(string title, string message, int priority, ILogger logger, CancellationToken ct = default, string? sound = null, bool html = false)
+    public static async Task SendAsync(string title, string message, int priority, string? hostKey, ILogger logger, CancellationToken ct = default, string? sound = null, bool html = false)
     {
-        if (PushoverSnooze.IsSnoozed)
+        bool isRecovery = priority == 0 && hostKey != null;
+
+        if (!isRecovery && hostKey != null && PushoverSnooze.IsSnoozed(hostKey))
         {
-            logger.LogDebug("🔕 Notification ignorée (snooze actif jusqu'au {Until:dd/MM/yyyy HH:mm} UTC) : {Title}", PushoverSnooze.SnoozeUntil, title);
+            logger.LogDebug("🔕 Notification ignorée (snooze actif jusqu'au {Until:dd/MM/yyyy HH:mm} UTC) : {Title}", PushoverSnooze.GetSnoozeUntil(hostKey), title);
             return;
         }
 
@@ -43,7 +45,10 @@ static class PushoverClient
 
             logger.LogDebug("Notification Pushover envoyée : {Title} (HTTP {StatusCode})", title, (int)response.StatusCode);
 
-            if (priority == 2 && response.IsSuccessStatusCode)
+            if (isRecovery)
+                PushoverSnooze.ClearSnooze(hostKey!);
+
+            if (priority == 2 && response.IsSuccessStatusCode && hostKey != null)
             {
                 var json = await response.Content.ReadAsStringAsync(ct);
                 var doc = JsonDocument.Parse(json);
@@ -51,7 +56,7 @@ static class PushoverClient
                 {
                     var receipt = receiptProp.GetString();
                     if (!string.IsNullOrEmpty(receipt))
-                        PushoverSnooze.StartWatching(receipt, logger, ct);
+                        PushoverSnooze.StartWatching(hostKey, receipt, logger, ct);
                 }
             }
         }

@@ -5,20 +5,19 @@ namespace NetworkMonitor;
 
 static class PushoverSnooze
 {
-    private static DateTime _snoozeUntil = StateStore.SnoozeUntil;
-
-    public static DateTime SnoozeUntil => _snoozeUntil;
-    public static bool IsSnoozed => DateTime.UtcNow < _snoozeUntil;
-
     private static int SnoozeDays =>
         int.TryParse(Environment.GetEnvironmentVariable("SNOOZE_DAYS"), out var d) && d > 0 ? d : 1;
 
-    public static void StartWatching(string receipt, ILogger logger, CancellationToken ct)
+    public static DateTime GetSnoozeUntil(string key) => StateStore.GetSnoozeUntil(key);
+    public static bool IsSnoozed(string key) => DateTime.UtcNow < GetSnoozeUntil(key);
+    public static void ClearSnooze(string key) => StateStore.ClearSnooze(key);
+
+    public static void StartWatching(string key, string receipt, ILogger logger, CancellationToken ct)
     {
-        _ = Task.Run(() => WatchAsync(receipt, logger, ct), CancellationToken.None);
+        _ = Task.Run(() => WatchAsync(key, receipt, logger, ct), CancellationToken.None);
     }
 
-    private static async Task WatchAsync(string receipt, ILogger logger, CancellationToken ct)
+    private static async Task WatchAsync(string key, string receipt, ILogger logger, CancellationToken ct)
     {
         var token = Environment.GetEnvironmentVariable("PUSHOVER_TOKEN")!;
         var url = $"https://api.pushover.net/1/receipts/{receipt}.json?token={token}";
@@ -37,9 +36,9 @@ static class PushoverSnooze
 
                 if (doc.RootElement.TryGetProperty("acknowledged", out var ackProp) && ackProp.GetInt32() == 1)
                 {
-                    _snoozeUntil = DateTime.UtcNow.AddDays(SnoozeDays);
-                    StateStore.SetSnooze(_snoozeUntil);
-                    logger.LogInformation("🔕 Notification acquittée — notifications suspendues jusqu'au {Until:dd/MM/yyyy HH:mm} UTC", _snoozeUntil);
+                    var snoozeUntil = DateTime.UtcNow.AddDays(SnoozeDays);
+                    StateStore.SetSnooze(key, snoozeUntil);
+                    logger.LogInformation("🔕 Notification acquittée [{Key}] — notifications suspendues jusqu'au {Until:dd/MM/yyyy HH:mm} UTC", key, snoozeUntil);
                     return;
                 }
             }
