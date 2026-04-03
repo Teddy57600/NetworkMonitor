@@ -18,13 +18,6 @@ class CronSchedule : ISchedule
 
     public string Description => CronDescription.ToFrench(_expression);
 
-    public async Task WaitForNextAsync(CancellationToken ct)
-    {
-        var next = _cron.GetNextOccurrence(DateTimeOffset.UtcNow, TimeZoneInfo.Utc);
-        if (next is null) return;
-
-        var delay = next.Value - DateTimeOffset.UtcNow;
-        if (delay > TimeSpan.Zero)
-            await Task.Delay(delay, ct);
-    }
+    public DateTimeOffset? GetNextOccurrence(DateTimeOffset from) =>
+        _cron.GetNextOccurrence(from, TimeZoneInfo.Local);
 }

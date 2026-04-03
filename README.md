@@ -8,60 +8,75 @@
 </p>
 
 <p align="center">
-  Surveillance réseau légère et autonome pour superviser des hôtes IP et des endpoints TCP,
-  avec alertes Pushover, persistance d'état, journalisation sur disque et exécution conteneurisée.
+  Supervision réseau légère en .NET, avec surveillance ICMP/TCP, notifications Pushover,
+  persistance d'état, exécution Docker et configuration rechargeable à chaud.
 </p>
 
 ---
 
 ## ✨ Vue d'ensemble
 
-**NetworkMonitor** est une application console .NET orientée supervision simple, robuste et déployable partout.
+**NetworkMonitor** est une application console .NET pensée pour superviser simplement des IP et des services TCP, sans stack de monitoring lourde.
 
 Elle permet de :
 
-- surveiller une ou plusieurs **adresses IP** via `ping`
-- surveiller un ou plusieurs **services TCP** via `host:port`
-- déclencher des **notifications Pushover** lors d'une panne, d'une reprise et d'une indisponibilité prolongée
-- envoyer une **notification Pushover au démarrage et à l'arrêt** du service
-- **mémoriser l'état** des cibles dans un stockage persistant
-- produire des **logs console + fichiers**
-- piloter la fréquence d'exécution via **intervalle** ou **expression CRON**
-- être exécutée localement ou via **Docker**
+- surveiller des **adresses IP** via `ping`
+- surveiller des **services TCP** via `host:port`
+- envoyer des notifications **Pushover** lors d'une panne, d'une reprise et d'une indisponibilité prolongée
+- envoyer une notification **au démarrage et à l'arrêt** du service
+- persister l'état des moniteurs et des snoozes dans `state.json`
+- écrire des logs dans la console et sur disque
+- piloter l'exécution via **intervalle** ou **CRON**
+- configurer l'application par **variables d'environnement** ou par **fichier YAML**
+- recharger la configuration YAML **sans redémarrage**
+- tourner localement ou dans **Docker**
 
-Le projet cible **.NET 11** et active la **publication AOT** pour des déploiements compacts et rapides.
+Le projet cible **.NET 11** et active la **publication Native AOT**.
 
 ---
 
 ## 🚀 Fonctionnalités
 
 ### Surveillance ICMP
-- Lecture des cibles via `PING_TARGETS`
-- Jusqu'à **3 tentatives de ping** par cycle de vérification
-- Passage en état **DOWN** après **3 cycles échoués consécutifs**
-- Notification de **recovery** dès qu'une cible redevient joignable
+- lecture des cibles via `PING_TARGETS` ou YAML
+- jusqu'à **3 tentatives de ping** par cycle
+- passage en état **DOWN** après **3 cycles échoués consécutifs**
+- notification `🟢 RECOVERY` dès qu'une cible redevient joignable
 
 ### Surveillance TCP
-- Lecture des cibles via `TCP_TARGETS`
-- Vérification de disponibilité sur des couples `host:port`
-- Jusqu'à **3 tentatives de connexion** par cycle
-- Détection d'indisponibilité et notification de reprise
+- lecture des cibles via `TCP_TARGETS` ou YAML
+- vérification de disponibilité sur des couples `host:port`
+- jusqu'à **3 tentatives de connexion** par cycle
+- notification de reprise quand le service redevient accessible
 
-### Alerting intelligent
-- Notifications **Pushover** avec niveaux de priorité adaptés
-- Notification de **démarrage** avec son dédié configurable
-- Notification d'**arrêt** avec son dédié configurable et motif de terminaison
-- Relance en **urgence** si un incident dure dans le temps
-- Mécanisme de **snooze automatique** lorsqu'une alerte urgente est acquittée
+### Alertes Pushover
+- notification `🔴 DOWN`
+- notification `🚨 STILL DOWN` en priorité urgente après **5 minutes** d'incident continu
+- notification `🟢 RECOVERY`
+- notification `🚀` au démarrage et `🛑` à l'arrêt
+- sons de démarrage et d'arrêt configurables
 
-### Résilience intégrée
-- **Circuit breaker** temporaire après détection d'une panne
-- **Persistance d'état** dans `state.json`
-- Conservation du contexte entre redémarrages
+### Snooze intelligent
+- un `receipt` Pushover est surveillé pour les alertes urgentes
+- si l'alerte est acquittée, un **snooze** est activé pour le moniteur concerné
+- le snooze est **par hôte** ou **par `host:port`**
+- une notification `RECOVERY` est toujours envoyée, même pendant un snooze
+- lors d'un `RECOVERY`, le snooze du moniteur concerné est automatiquement supprimé
+
+### Rechargement de configuration à chaud
+- si le fichier YAML change pendant l'exécution, l'application le recharge automatiquement
+- les cibles ping et TCP sont ajoutées ou retirées sans redémarrage
+- les paramètres Pushover, le planning et `snoozeDays` sont pris en compte dynamiquement
+- l'attente entre deux cycles est interrompue si la configuration change
+
+### Résilience
+- circuit breaker temporaire après détection d'une panne
+- persistance d'état dans `state.json`
+- conservation du contexte entre redémarrages
 
 ### Observabilité
-- Logs temps réel dans la console
-- Fichiers de logs journaliers dans `DATA_DIR/logs`
+- logs console en temps réel
+- logs journaliers dans `DATA_DIR/logs`
 
 ---
 
@@ -70,9 +85,9 @@ Le projet cible **.NET 11** et active la **publication AOT** pour des déploieme
 - **.NET 11**
 - **C#**
 - **Cronos** pour la planification CRON
-- **Microsoft.Extensions.Logging** pour la journalisation
+- **Microsoft.Extensions.Logging** pour les logs
 - **Pushover API** pour les notifications
-- **Docker** pour le packaging et l'exécution
+- **Docker** pour l'exécution conteneurisée
 - **Native AOT** pour la publication
 
 ---
@@ -82,6 +97,8 @@ Le projet cible **.NET 11** et active la **publication AOT** pour des déploieme
 ```text
 NetworkMonitor/
 ├─ NetworkMonitor/
+│  ├─ Configuration/
+│  │  └─ AppConfigProvider.cs
 │  ├─ Monitoring/
 │  │  ├─ MonitorState.cs
 │  │  └─ TcpPortMonitorState.cs
@@ -97,7 +114,8 @@ NetworkMonitor/
 │  ├─ Program.cs
 │  ├─ StateStore.cs
 │  ├─ Dockerfile
-│  └─ NetworkMonitor.csproj
+│  ├─ NetworkMonitor.csproj
+│  └─ config.yaml.example
 └─ README.md
 ```
 
@@ -105,73 +123,249 @@ NetworkMonitor/
 
 ## ⚙️ Configuration
 
-La configuration se fait uniquement par **variables d'environnement**.
+L'application peut être configurée de deux façons :
 
-### Variables disponibles
+1. par **variables d'environnement**
+2. par **fichier YAML**
+
+Le mode actuel par variables d'environnement reste entièrement supporté.
+
+### Priorité de résolution
+
+Pour chaque valeur :
+
+- si une valeur YAML est présente, elle est utilisée
+- sinon, la variable d'environnement correspondante est utilisée
+- sinon, la valeur par défaut s'applique
+
+### Variables d'environnement disponibles
 
 | Variable | Description | Exemple | Valeur par défaut |
 |---|---|---|---|
 | `PING_TARGETS` | Liste d'IPs à surveiller, séparées par des virgules | `192.168.1.1,8.8.8.8` | vide |
 | `TCP_TARGETS` | Liste d'endpoints TCP `host:port`, séparés par des virgules | `google.com:443,192.168.1.10:22` | vide |
-| `SCHEDULE_INTERVAL_SECONDS` | Intervalle entre deux cycles de vérification | `10` | `10` |
-| `SCHEDULE_CRON` | Expression CRON pour planifier les vérifications | `*/3 * * * *` | non définie |
+| `SCHEDULE_INTERVAL_SECONDS` | Intervalle entre deux cycles | `10` | `10` |
+| `SCHEDULE_CRON` | Expression CRON | `*/3 * * * *` | non définie |
 | `PUSHOVER_TOKEN` | Token d'application Pushover | `xxxxx` | vide |
 | `PUSHOVER_USER` | Clé utilisateur ou groupe Pushover | `xxxxx` | vide |
-| `PUSHOVER_STARTUP_SOUND` | Son Pushover utilisé pour la notification de démarrage | `cosmic` | `cosmic` |
-| `PUSHOVER_SHUTDOWN_SOUND` | Son Pushover utilisé pour la notification d'arrêt | `falling` | `falling` |
-| `SNOOZE_DAYS` | Nombre de jours de suspension après acquittement d'une alerte urgente | `1` | `1` |
-| `DATA_DIR` | Répertoire de persistance (`state.json`, logs) | `/data` | `.` |
-| `APP_VERSION` | Version affichée dans les logs / conteneur | `1.4.4` | `inconnue` |
+| `PUSHOVER_STARTUP_SOUND` | Son de la notification de démarrage | `cosmic` | `cosmic` |
+| `PUSHOVER_SHUTDOWN_SOUND` | Son de la notification d'arrêt | `falling` | `falling` |
+| `SNOOZE_DAYS` | Nombre de jours de snooze après acquittement | `3` | `1` |
+| `DATA_DIR` | Répertoire de persistance (`state.json`, logs, config YAML par défaut) | `/data` | `.` |
+| `APP_VERSION` | Version affichée dans les logs/notifications | `1.5.0` | `inconnue` |
+| `CONFIG_YAML_PATH` | Chemin explicite du fichier YAML | `/data/config.yaml` | `DATA_DIR/config.yaml` |
+| `TZ` | Fuseau horaire du conteneur | `Europe/Paris` | `Europe/Paris` dans l'image Docker |
 
-### Priorité entre intervalle et CRON
+### Priorité entre CRON et intervalle
 
-Le comportement actuel est le suivant :
+Le comportement reste le suivant :
 
-1. si `SCHEDULE_CRON` est défini, il est utilisé
-2. sinon, `SCHEDULE_INTERVAL_SECONDS` est utilisé
-3. si rien n'est défini, l'application tourne toutes les **10 secondes**
+1. si `schedule.cron` ou `SCHEDULE_CRON` est défini, il est utilisé
+2. sinon, `schedule.intervalSeconds` ou `SCHEDULE_INTERVAL_SECONDS` est utilisé
+3. sinon, l'application tourne toutes les **10 secondes**
+
+---
+
+## 📝 Configuration YAML
+
+### Emplacement
+
+Par défaut, l'application cherche le fichier ici :
+
+```text
+DATA_DIR/config.yaml
+```
+
+Ce chemin peut être surchargé avec :
+
+```text
+CONFIG_YAML_PATH
+```
+
+### Rechargement à chaud
+
+Le fichier YAML est relu automatiquement lorsqu'il change :
+
+- au début de chaque cycle
+- pendant l'attente jusqu'au prochain cycle
+
+Il n'est pas nécessaire de redémarrer l'application.
+
+### Détection des changements
+
+Le rechargement à chaud repose sur un mode **hybride** :
+
+- **`FileSystemWatcher`** pour une détection quasi immédiate des changements
+- **repli périodique automatique** toutes les **30 secondes** pour rester fiable en environnement Docker/Linux
+
+Ce choix est volontaire : dans un conteneur Linux, `FileSystemWatcher` s'appuie sur **inotify**, ce qui fonctionne généralement très bien, y compris sur des volumes montés. En revanche, selon le type de montage ou le système de fichiers hôte, certains événements peuvent être regroupés, retardés ou ne pas remonter comme attendu.
+
+Le comportement final est donc :
+
+- si l'événement système remonte correctement, la configuration est rechargée presque immédiatement
+- sinon, le contrôle périodique garantit qu'une modification sera quand même détectée sans redémarrage
+
+Les changements suivants sont pris en compte :
+
+- modification du contenu du fichier
+- création du fichier
+- suppression du fichier
+- renommage / remplacement atomique du fichier
+- erreur interne du watcher, avec bascule implicite sur le repli périodique
+
+### Recommandations Docker / production
+
+- un montage `:ro` sur le fichier YAML fonctionne très bien si la mise à jour est faite **depuis l'hôte**
+- en revanche, un fichier monté en `:ro` ne peut évidemment pas être modifié **depuis le conteneur**
+- en production, le plus simple est donc de modifier `config.yaml` côté hôte, puis de laisser l'application détecter automatiquement le changement
+- pour des mises à jour plus fiables, privilégier un **remplacement atomique** du fichier (écriture dans un fichier temporaire puis renommage)
+- si votre environnement de stockage remonte mal les événements fichiers, le repli périodique continue malgré tout d'assurer la prise en compte des changements
+
+#### Exemple de mise à jour atomique en PowerShell
+
+```powershell
+$configPath = ".\config.yaml"
+$tempPath = ".\config.yaml.tmp"
+
+@'
+appVersion: "1.6.1"
+snoozeDays: 2
+
+schedule:
+  intervalSeconds: 15
+
+monitoring:
+  pingTargets:
+    - 1.1.1.1
+'@ | Set-Content -Path $tempPath -Encoding UTF8
+
+Move-Item -Path $tempPath -Destination $configPath -Force
+```
+
+#### Exemple de mise à jour atomique en Bash
+
+```bash
+CONFIG_PATH=./config.yaml
+TEMP_PATH=./config.yaml.tmp
+
+cat > "$TEMP_PATH" <<'EOF'
+appVersion: "1.6.1"
+snoozeDays: 2
+
+schedule:
+  intervalSeconds: 15
+
+monitoring:
+  pingTargets:
+    - 1.1.1.1
+EOF
+
+mv -f "$TEMP_PATH" "$CONFIG_PATH"
+```
+
+### Exemple
+
+Un exemple prêt à l'emploi est fourni dans :
+
+```text
+NetworkMonitor/config.yaml.example
+```
+
+Contenu type :
+
+```yaml
+appVersion: "1.6.0"
+snoozeDays: 3
+
+schedule:
+  cron: "*/30 * * * * *"
+  # intervalSeconds: 10
+
+pushover:
+  token: "your-pushover-token"
+  user: "your-pushover-user"
+  startupSound: "cosmic"
+  shutdownSound: "falling"
+
+monitoring:
+  pingTargets:
+    - 1.1.1.1
+    - 8.8.8.8
+  tcpTargets:
+    - google.com:443
+    - host: localhost
+      port: 80
+```
+
+### Clés YAML supportées
+
+| Clé | Description |
+|---|---|
+| `appVersion` | Version affichée par l'application |
+| `snoozeDays` | Durée du snooze après acquittement |
+| `schedule.cron` | Planification CRON |
+| `schedule.intervalSeconds` | Planification par intervalle |
+| `pushover.token` | Token Pushover |
+| `pushover.user` | Utilisateur/groupe Pushover |
+| `pushover.startupSound` | Son de démarrage |
+| `pushover.shutdownSound` | Son d'arrêt |
+| `monitoring.pingTargets` | Liste des IP surveillées |
+| `monitoring.tcpTargets` | Liste des endpoints TCP |
+
+Pour `tcpTargets`, les deux syntaxes suivantes sont acceptées :
+
+```yaml
+tcpTargets:
+  - google.com:443
+  - host: localhost
+    port: 80
+```
 
 ---
 
 ## 🔔 Comportement des alertes
 
 ### Ping
+
 Pour une cible IP :
 
 - un cycle effectue jusqu'à **3 tentatives de ping**
 - après **3 cycles échoués consécutifs**, la cible passe en **DOWN**
 - une notification `🔴 DOWN` est envoyée
-- si la panne dure plus de **5 minutes**, une alerte `🚨 STILL DOWN` est envoyée avec priorité urgente
+- si la panne dure plus de **5 minutes**, une notification `🚨 STILL DOWN` est envoyée en priorité urgente
 - dès que la cible répond à nouveau, une notification `🟢 RECOVERY` est envoyée
 
 ### TCP
+
 Pour une cible TCP :
 
 - un cycle effectue jusqu'à **3 tentatives de connexion**
-- si la vérification échoue, la cible est marquée **DOWN**
-- une notification `🔴 DOWN` est envoyée
-- si la panne dure plus de **5 minutes**, une alerte `🚨 STILL DOWN` est envoyée avec priorité urgente
+- au premier passage en panne, une notification `🔴 DOWN` est envoyée
+- si la panne dure plus de **5 minutes**, une notification `🚨 STILL DOWN` est envoyée en priorité urgente
 - dès qu'une connexion réussit, une notification `🟢 RECOVERY` est envoyée
 
 ### Snooze Pushover
+
 Lorsqu'une notification urgente est acquittée côté Pushover :
 
-- l'application détecte l'acquittement via le `receipt`
-- les notifications sont suspendues pendant `SNOOZE_DAYS`
-- la date de fin de snooze est persistée dans le stockage d'état
+- l'application sonde le `receipt` retourné par Pushover
+- si l'alerte est acquittée, un snooze est activé pour le moniteur concerné
+- pendant ce snooze, les notifications `DOWN` et `STILL DOWN` suivantes sont ignorées pour ce moniteur
+- un `RECOVERY` est toujours envoyé
+- après `RECOVERY`, le snooze de ce moniteur est supprimé
+- si le moniteur retombe ensuite, il peut à nouveau générer un nouveau snooze après acquittement
 
 ### Notifications de cycle de vie
-Au démarrage du programme :
+
+Au démarrage :
 
 - une notification `🚀 NetworkMonitor démarré` est envoyée
-- le message contient la version, le rythme d'exécution et le nombre de cibles surveillées
-- le son utilisé est `PUSHOVER_STARTUP_SOUND` (par défaut : `cosmic`)
+- elle contient la version, le rythme d'exécution et le nombre de cibles surveillées
 
-À l'arrêt du programme :
+À l'arrêt :
 
 - une notification `🛑 NetworkMonitor arrêté` est envoyée
-- le message contient le **motif d'arrêt** lorsque celui-ci est connu
-- le son utilisé est `PUSHOVER_SHUTDOWN_SOUND` (par défaut : `falling`)
+- elle contient le motif d'arrêt si disponible
 
 Motifs d'arrêt actuellement distingués :
 
@@ -185,25 +379,33 @@ Motifs d'arrêt actuellement distingués :
 
 ## 🗂️ Persistance et fichiers générés
 
-Le répertoire défini par `DATA_DIR` contient :
+Le répertoire `DATA_DIR` contient :
 
 ### `state.json`
-Stocke :
-- l'état courant des moniteurs
+
+Ce fichier stocke notamment :
+
+- l'état des moniteurs
 - la date de début d'incident
-- la date de fin de snooze des notifications
+- les snoozes actifs par cible
 
 ### `logs/`
-Contient un fichier journalier au format :
+
+Contient un fichier journalier :
 
 ```text
 networkmonitor-YYYY-MM-DD.log
 ```
 
+### `config.yaml`
+
+Si utilisé, le fichier YAML peut être placé dans `DATA_DIR` pour centraliser configuration et état.
+
 Exemple d'arborescence :
 
 ```text
 /data/
+├─ config.yaml
 ├─ state.json
 └─ logs/
    └─ networkmonitor-2026-01-18.log
@@ -219,17 +421,7 @@ Exemple d'arborescence :
 - ou **Docker**
 - un compte **Pushover** si vous souhaitez les notifications
 
-> Le projet cible actuellement `net11.0`.
-
-### Exécution locale
-
-Depuis la racine du dépôt :
-
-```bash
-dotnet run --project NetworkMonitor/NetworkMonitor.csproj
-```
-
-Exemple PowerShell :
+### Exécution locale avec variables d'environnement
 
 ```powershell
 $env:PING_TARGETS="8.8.8.8,1.1.1.1"
@@ -241,11 +433,26 @@ $env:DATA_DIR=".data"
 dotnet run --project .\NetworkMonitor\NetworkMonitor.csproj
 ```
 
+### Exécution locale avec YAML
+
+```powershell
+New-Item -ItemType Directory -Force .data | Out-Null
+Copy-Item .\NetworkMonitor\config.yaml.example .\.data\config.yaml
+$env:DATA_DIR=".data"
+dotnet run --project .\NetworkMonitor\NetworkMonitor.csproj
+```
+
 ---
 
 ## 🐳 Utilisation avec Docker
 
-Le projet contient déjà un `Dockerfile` prêt à l'emploi.
+Le projet contient un `Dockerfile` prêt à l'emploi.
+
+### Particularités de l'image
+
+- installation de `tzdata`
+- fuseau horaire du conteneur fixé à **`Europe/Paris`**
+- volume `/data` pour la persistance
 
 ### Build
 
@@ -253,7 +460,7 @@ Le projet contient déjà un `Dockerfile` prêt à l'emploi.
 docker build -t networkmonitor .
 ```
 
-### Run
+### Run avec variables d'environnement
 
 ```bash
 docker run -d \
@@ -271,68 +478,51 @@ docker run -d \
   networkmonitor
 ```
 
-> Sous Docker, l'arrêt via `docker stop` envoie un `SIGTERM`. L'application intercepte ce signal pour effectuer un arrêt propre et envoyer la notification Pushover de fin.
+### Run avec YAML monté dans `/data`
 
-### Exemple Docker Compose
+```bash
+docker run -d \
+  --name networkmonitor \
+  -e DATA_DIR="/data" \
+  -v ${PWD}/config.yaml:/data/config.yaml:ro \
+  -v networkmonitor-data:/data \
+  networkmonitor
+```
+
+### Docker Compose
+
+Un fichier `.env.example` est fourni à la racine pour personnaliser facilement l'exemple Compose.
+
+Exemple :
+
+```bash
+cp .env.example .env
+```
 
 ```yaml
 services:
   networkmonitor:
-    build: .
+    build:
+      context: .
+      dockerfile: NetworkMonitor/Dockerfile
     container_name: networkmonitor
     restart: unless-stopped
     environment:
-      PING_TARGETS: "8.8.8.8,1.1.1.1"
-      TCP_TARGETS: "google.com:443,192.168.1.10:22"
-      SCHEDULE_CRON: "*/3 * * * *"
-      PUSHOVER_TOKEN: "your-token"
-      PUSHOVER_USER: "your-user"
-      PUSHOVER_STARTUP_SOUND: "cosmic"
-      PUSHOVER_SHUTDOWN_SOUND: "falling"
-      SNOOZE_DAYS: "1"
-      DATA_DIR: "/data"
-      APP_VERSION: "1.4.4"
+      DATA_DIR: /data
+      CONFIG_YAML_PATH: /config/config.yaml
     volumes:
+      - ./config.yaml:/config/config.yaml:ro
       - networkmonitor-data:/data
 
 volumes:
   networkmonitor-data:
 ```
 
----
-
-## 🧪 Exemples de configuration
-
-### 1. Surveiller des IPs uniquement
-
-```env
-PING_TARGETS=192.168.1.1,8.8.8.8,1.1.1.1
-SCHEDULE_INTERVAL_SECONDS=10
-DATA_DIR=/data
-```
-
-### 2. Surveiller des services TCP uniquement
-
-```env
-TCP_TARGETS=google.com:443,localhost:5432,192.168.1.20:22
-SCHEDULE_INTERVAL_SECONDS=30
-DATA_DIR=/data
-```
-
-### 3. Utiliser une planification CRON
-
-```env
-PING_TARGETS=8.8.8.8
-TCP_TARGETS=google.com:443
-SCHEDULE_CRON=*/5 * * * *
-DATA_DIR=/data
-```
+> Sous Docker, l'arrêt via `docker stop` envoie un `SIGTERM`. L'application intercepte ce signal pour effectuer un arrêt propre et envoyer la notification de fin.
 
 ---
 
 ## 🕒 Exemples d'expressions CRON
-
-Le projet convertit les expressions CRON en description lisible dans les logs.
 
 | Expression | Interprétation |
 |---|---|
@@ -342,33 +532,32 @@ Le projet convertit les expressions CRON en description lisible dans les logs.
 | `0 0 1 * *` | le 1er de chaque mois à minuit |
 | `*/30 * * * * *` | toutes les 30 secondes |
 
+Les expressions sont évaluées avec le fuseau horaire local du processus. Dans l'image Docker fournie, ce fuseau est `Europe/Paris`.
+
 ---
 
 ## 🪵 Logs et exploitation
 
-Au démarrage, l'application journalise notamment :
+Au démarrage et pendant l'exécution, l'application journalise notamment :
 
-- la **version applicative**
-- la **description de la planification**
-- les événements `DOWN`, `RECOVERY` et `STILL DOWN`
+- la version applicative
+- la description de la planification active
+- les événements `DOWN`, `STILL DOWN` et `RECOVERY`
+- les rechargements de configuration YAML
+- les périodes de snooze
 - les erreurs d'envoi de notifications
-- les périodes de **snooze**
-
-Cela rend l'application simple à intégrer dans :
-
-- un serveur domestique / homelab
-- un mini VPS
-- un conteneur Docker sur NAS
-- une plateforme d'hébergement légère
+- les erreurs de lecture/écriture de `state.json`
 
 ---
 
 ## 🔐 Notes d'exploitation
 
-- si `PING_TARGETS` est vide, l'application démarre mais journalise un avertissement
-- si `TCP_TARGETS` est vide, l'application démarre également avec avertissement
-- sans `PUSHOVER_TOKEN` et `PUSHOVER_USER`, les tentatives d'envoi de notifications échoueront
-- `DATA_DIR` doit être persistant en environnement conteneurisé pour conserver l'état et les logs
+- si aucune cible ping n'est configurée, l'application démarre avec avertissement
+- si aucune cible TCP n'est configurée, l'application démarre aussi avec avertissement
+- sans `PUSHOVER_TOKEN` et `PUSHOVER_USER`, les notifications échoueront
+- `DATA_DIR` doit être persistant en environnement conteneurisé
+- `state.json` est compatible avec l'exécution AOT grâce à la sérialisation source-generated
+- le parseur YAML intégré supporte le format documenté ici ; il ne vise pas un moteur YAML générique complet
 
 ---
 
@@ -397,7 +586,7 @@ dotnet publish NetworkMonitor/NetworkMonitor.csproj -c Release
 ## 📘 Cas d'usage typiques
 
 - supervision basique d'équipements réseau internes
-- vérification de disponibilité Internet / DNS publics
+- vérification de disponibilité Internet ou DNS publics
 - contrôle d'ouverture de ports critiques
 - surveillance légère de services auto-hébergés
 - alerting simple sans stack de supervision lourde
@@ -411,8 +600,8 @@ Les contributions sont les bienvenues pour :
 - enrichir les types de sondes
 - améliorer la stratégie de retry/circuit breaker
 - ajouter des tests automatisés
-- proposer des intégrations de notifications supplémentaires
-- améliorer l'expérience Docker / CI
+- proposer d'autres canaux de notification
+- améliorer l'expérience Docker et CI
 
 ---
 
@@ -420,17 +609,15 @@ Les contributions sont les bienvenues pour :
 
 Aucune licence n'est actuellement documentée dans le dépôt.
 
-Si vous souhaitez ouvrir clairement l'usage du projet, ajoutez un fichier `LICENSE` adapté.
-
 ---
 
 ## ❤️ Résumé
 
-**NetworkMonitor** est un moniteur réseau minimaliste, pratique et facile à déployer, pensé pour ceux qui veulent :
+**NetworkMonitor** fournit un monitoring réseau simple à déployer, avec :
 
 - un binaire léger
-- peu de configuration
-- des alertes utiles
-- une exécution fiable en local ou en conteneur
-
-Si vous cherchez une solution simple de **monitoring réseau + notifications Pushover**, ce projet fournit une base propre, moderne et efficace.
+- de la persistance
+- des alertes Pushover utiles
+- un snooze intelligent par cible
+- une configuration YAML rechargeable à chaud
+- une exécution fiable en local ou dans Docker

@@ -44,6 +44,11 @@ FROM ${FINAL_BASE_IMAGE:-mcr.microsoft.com/dotnet/runtime-deps:11.0-preview} AS 
 WORKDIR /app
 COPY --from=publish /app/publish .
 
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends tzdata \
+    && rm -rf /var/lib/apt/lists/*
+
+ENV TZ=Europe/Paris
 ENV PUSHOVER_TOKEN=""
 ENV PUSHOVER_USER=""
 ENV PUSHOVER_STARTUP_SOUND="cosmic"
@@ -57,5 +62,5 @@ VOLUME /data
 
 ENTRYPOINT ["./NetworkMonitor"]
 
-ENV APP_VERSION="1.4.4"
-LABEL Version="1.4.4"
+ENV APP_VERSION="1.5.0"
+LABEL Version="1.5.0"

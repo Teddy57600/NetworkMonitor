@@ -4,6 +4,6 @@ class IntervalSchedule(int seconds) : ISchedule
 {
     public string Description => $"intervalle toutes les {seconds}s";
 
-    public Task WaitForNextAsync(CancellationToken ct) =>
-        Task.Delay(TimeSpan.FromSeconds(seconds), ct);
+    public DateTimeOffset? GetNextOccurrence(DateTimeOffset from) =>
+        from.AddSeconds(seconds);
 }

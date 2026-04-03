@@ -5,9 +5,6 @@ namespace NetworkMonitor;
 
 static class PushoverSnooze
 {
-    private static int SnoozeDays =>
-        int.TryParse(Environment.GetEnvironmentVariable("SNOOZE_DAYS"), out var d) && d > 0 ? d : 1;
-
     public static DateTime GetSnoozeUntil(string key) => StateStore.GetSnoozeUntil(key);
     public static bool IsSnoozed(string key) => DateTime.UtcNow < GetSnoozeUntil(key);
     public static void ClearSnooze(string key) => StateStore.ClearSnooze(key);
@@ -19,7 +16,8 @@ static class PushoverSnooze
 
     private static async Task WatchAsync(string key, string receipt, ILogger logger, CancellationToken ct)
     {
-        var token = Environment.GetEnvironmentVariable("PUSHOVER_TOKEN")!;
+        var config = AppConfigProvider.Current;
+        var token = config.PushoverToken;
         var url = $"https://api.pushover.net/1/receipts/{receipt}.json?token={token}";
         var deadline = DateTime.UtcNow.AddSeconds(300);
 
@@ -36,7 +34,7 @@ static class PushoverSnooze
 
                 if (doc.RootElement.TryGetProperty("acknowledged", out var ackProp) && ackProp.GetInt32() == 1)
                 {
-                    var snoozeUntil = DateTime.UtcNow.AddDays(SnoozeDays);
+                    var snoozeUntil = DateTime.UtcNow.AddDays(config.SnoozeDays);
                     StateStore.SetSnooze(key, snoozeUntil);
                     logger.LogInformation("🔕 Notification acquittée [{Key}] — notifications suspendues jusqu'au {Until:dd/MM/yyyy HH:mm} UTC", key, snoozeUntil);
                     return;

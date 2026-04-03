@@ -7,6 +7,7 @@ static class PushoverClient
 {
     public static async Task SendAsync(string title, string message, int priority, string? hostKey, ILogger logger, CancellationToken ct = default, string? sound = null, bool html = false)
     {
+        var config = AppConfigProvider.Current;
         bool isRecovery = priority == 0 && hostKey != null;
 
         if (!isRecovery && hostKey != null && PushoverSnooze.IsSnoozed(hostKey))
@@ -21,8 +22,8 @@ static class PushoverClient
 
             var data = new Dictionary<string, string>
             {
-                ["token"] = Environment.GetEnvironmentVariable("PUSHOVER_TOKEN")!,
-                ["user"] = Environment.GetEnvironmentVariable("PUSHOVER_USER")!,
+                ["token"] = config.PushoverToken,
+                ["user"] = config.PushoverUser,
                 ["title"] = title,
                 ["message"] = message,
                 ["priority"] = priority.ToString()

@@ -3,5 +3,5 @@ namespace NetworkMonitor;
 interface ISchedule
 {
     string Description { get; }
-    Task WaitForNextAsync(CancellationToken ct);
+    DateTimeOffset? GetNextOccurrence(DateTimeOffset from);
 }

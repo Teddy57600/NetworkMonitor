@@ -5,15 +5,8 @@ namespace NetworkMonitor;
 
 internal class Program
 {
-    private const string DefaultStartupSound = "cosmic";
-    private const string DefaultShutdownSound = "falling";
-
     static async Task Main(string[] args)
     {
-        var ips = ParsePingTargets();
-        var version = GetApplicationVersion();
-        var shutdownReason = "arrêt normal";
-
         using var loggerFactory = LoggerFactory.Create(builder =>
             builder
                 .SetMinimumLevel(LogLevel.Debug)
@@ -21,20 +14,18 @@ internal class Program
                 .AddProvider(new FileLoggerProvider(Path.Combine(StateStore.DataDir, "logs"))));
 
         var logger = loggerFactory.CreateLogger<Program>();
-        if (ips.Count == 0)
-            logger.LogWarning("Aucune IP à monitorer n'est configurée via PING_TARGETS.");
+        AppConfigProvider.RefreshIfChanged(logger);
 
-        var monitors = ips.ToDictionary(
-            ip => ip,
-            ip => new MonitorState(ip, loggerFactory.CreateLogger<MonitorState>()));
-        
-        var tcpMonitors = ParseTcpTargets()
-            .Select(t => new TcpPortMonitorState(t.Host, t.Port, loggerFactory.CreateLogger<TcpPortMonitorState>()))
-            .ToList();
-        if (tcpMonitors.Count == 0)
-            logger.LogWarning("Aucun endpoint host:port à monitorer n'est configuré via TCP_TARGETS.");
+        var config = AppConfigProvider.Current;
+        var version = config.AppVersion;
+        var shutdownReason = "arrêt normal";
+        var configVersion = AppConfigProvider.Version;
 
-        var schedule = BuildSchedule();
+        var monitors = CreatePingMonitors(config.PingTargets, loggerFactory);
+        var tcpMonitors = CreateTcpMonitors(config.TcpTargets, loggerFactory);
+        var schedule = BuildSchedule(config);
+
+        LogActiveConfiguration(logger, config);
 
         using var cts = new CancellationTokenSource();
         Console.CancelKeyPress += (_, e) =>
@@ -49,27 +40,39 @@ internal class Program
         logger.LogInformation("NetworkMonitor démarré — version {Version} — {Schedule}", version, schedule.Description);
         await PushoverClient.SendAsync(
             "🚀 NetworkMonitor démarré",
-            BuildLifecycleMessage("✨ Service opérationnel", version, schedule.Description, ips.Count, tcpMonitors.Count),
+            BuildLifecycleMessage("✨ Service opérationnel", version, schedule.Description, monitors.Count, tcpMonitors.Count),
             0,
             null,
             logger,
             cts.Token,
-            GetStartupPushoverSound(),
+            config.StartupSound,
             html: true);
 
         try
         {
             while (!cts.Token.IsCancellationRequested)
             {
+                AppConfigProvider.RefreshIfChanged(logger);
+                if (configVersion != AppConfigProvider.Version)
+                {
+                    config = AppConfigProvider.Current;
+                    version = config.AppVersion;
+                    SyncPingMonitors(monitors, config.PingTargets, loggerFactory, logger);
+                    SyncTcpMonitors(tcpMonitors, config.TcpTargets, loggerFactory, logger);
+                    schedule = BuildSchedule(config);
+                    configVersion = AppConfigProvider.Version;
+                    LogActiveConfiguration(logger, config);
+                }
+
                 foreach (var monitor in monitors.Values)
                     await monitor.Check(cts.Token);
 
-                foreach (var tcpMonitor in tcpMonitors)
+                foreach (var tcpMonitor in tcpMonitors.Values)
                     await tcpMonitor.Check(cts.Token);
 
                 try
                 {
-                    await schedule.WaitForNextAsync(cts.Token);
+                    await WaitForNextAsync(schedule, logger, configVersion, cts.Token);
                 }
                 catch (OperationCanceledException)
                 {
@@ -85,61 +88,123 @@ internal class Program
         }
         finally
         {
+            AppConfigProvider.RefreshIfChanged(logger);
+            config = AppConfigProvider.Current;
+            version = config.AppVersion;
+            schedule = BuildSchedule(config);
             logger.LogInformation("NetworkMonitor arrêté. Motif : {Reason}", shutdownReason);
             await PushoverClient.SendAsync(
                 "🛑 NetworkMonitor arrêté",
-                BuildLifecycleMessage("🌙 Service arrêté", version, schedule.Description, ips.Count, tcpMonitors.Count, shutdownReason),
+                BuildLifecycleMessage("🌙 Service arrêté", version, schedule.Description, monitors.Count, tcpMonitors.Count, shutdownReason),
                 0,
                 null,
                 logger,
                 CancellationToken.None,
-                GetShutdownPushoverSound(),
+                config.ShutdownSound,
                 html: true);
         }
     }
 
-    private static IReadOnlyList<string> ParsePingTargets()
+    private static Dictionary<string, MonitorState> CreatePingMonitors(IReadOnlyList<string> ips, ILoggerFactory loggerFactory)
     {
-        var raw = Environment.GetEnvironmentVariable("PING_TARGETS");
-        if (string.IsNullOrWhiteSpace(raw))
-            return [];
-
-        return raw.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            .Where(ip => !string.IsNullOrWhiteSpace(ip))
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToArray();
+        return ips.ToDictionary(
+            ip => ip,
+            ip => new MonitorState(ip, loggerFactory.CreateLogger<MonitorState>()),
+            StringComparer.OrdinalIgnoreCase);
     }
 
-    private static IReadOnlyList<(string Host, int Port)> ParseTcpTargets()
+    private static Dictionary<string, TcpPortMonitorState> CreateTcpMonitors(IReadOnlyList<TcpTargetConfig> targets, ILoggerFactory loggerFactory)
     {
-        var raw = Environment.GetEnvironmentVariable("TCP_TARGETS");
-        if (string.IsNullOrWhiteSpace(raw)) return [];
+        return targets.ToDictionary(
+            target => BuildTcpKey(target.Host, target.Port),
+            target => new TcpPortMonitorState(target.Host, target.Port, loggerFactory.CreateLogger<TcpPortMonitorState>()),
+            StringComparer.OrdinalIgnoreCase);
+    }
 
-        var targets = new List<(string, int)>();
-        foreach (var entry in raw.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+    private static void SyncPingMonitors(Dictionary<string, MonitorState> monitors, IReadOnlyList<string> configuredIps, ILoggerFactory loggerFactory, ILogger logger)
+    {
+        var desiredIps = new HashSet<string>(configuredIps, StringComparer.OrdinalIgnoreCase);
+
+        foreach (var ip in monitors.Keys.Except(desiredIps, StringComparer.OrdinalIgnoreCase).ToArray())
         {
-            var lastColon = entry.LastIndexOf(':');
-            if (lastColon > 0 && int.TryParse(entry[(lastColon + 1)..], out var port))
-                targets.Add((entry[..lastColon], port));
+            monitors.Remove(ip);
+            logger.LogInformation("Monitor ping supprimé suite au rechargement de la configuration : {Ip}", ip);
         }
-        return targets;
+
+        foreach (var ip in desiredIps)
+        {
+            if (monitors.ContainsKey(ip))
+                continue;
+
+            monitors[ip] = new MonitorState(ip, loggerFactory.CreateLogger<MonitorState>());
+            logger.LogInformation("Monitor ping ajouté suite au rechargement de la configuration : {Ip}", ip);
+        }
     }
 
-    private static ISchedule BuildSchedule()
+    private static void SyncTcpMonitors(Dictionary<string, TcpPortMonitorState> monitors, IReadOnlyList<TcpTargetConfig> configuredTargets, ILoggerFactory loggerFactory, ILogger logger)
     {
-        var cronExpr = Environment.GetEnvironmentVariable("SCHEDULE_CRON");
-        if (!string.IsNullOrWhiteSpace(cronExpr))
-            return new CronSchedule(cronExpr);
+        var desiredTargets = configuredTargets.ToDictionary(
+            target => BuildTcpKey(target.Host, target.Port),
+            StringComparer.OrdinalIgnoreCase);
 
-        var intervalStr = Environment.GetEnvironmentVariable("SCHEDULE_INTERVAL_SECONDS");
-        int seconds = int.TryParse(intervalStr, out var s) && s > 0 ? s : 10;
-        return new IntervalSchedule(seconds);
+        foreach (var key in monitors.Keys.Except(desiredTargets.Keys, StringComparer.OrdinalIgnoreCase).ToArray())
+        {
+            monitors.Remove(key);
+            logger.LogInformation("Monitor TCP supprimé suite au rechargement de la configuration : {Target}", key);
+        }
+
+        foreach (var target in desiredTargets)
+        {
+            if (monitors.ContainsKey(target.Key))
+                continue;
+
+            monitors[target.Key] = new TcpPortMonitorState(target.Value.Host, target.Value.Port, loggerFactory.CreateLogger<TcpPortMonitorState>());
+            logger.LogInformation("Monitor TCP ajouté suite au rechargement de la configuration : {Target}", target.Key);
+        }
     }
 
-    private static string GetApplicationVersion()
+    private static ISchedule BuildSchedule(AppConfig config)
     {
-        var version = Environment.GetEnvironmentVariable("APP_VERSION");
-        return string.IsNullOrWhiteSpace(version) ? "inconnue" : version;
+        if (!string.IsNullOrWhiteSpace(config.ScheduleCron))
+            return new CronSchedule(config.ScheduleCron);
+
+        return new IntervalSchedule(config.ScheduleIntervalSeconds);
+    }
+
+    private static async Task WaitForNextAsync(ISchedule schedule, ILogger logger, int configVersion, CancellationToken ct)
+    {
+        var next = schedule.GetNextOccurrence(DateTimeOffset.Now);
+        if (next is null)
+            return;
+
+        while (!ct.IsCancellationRequested)
+        {
+            AppConfigProvider.RefreshIfChanged(logger);
+            if (configVersion != AppConfigProvider.Version)
+                return;
+
+            var remaining = next.Value - DateTimeOffset.Now;
+            if (remaining <= TimeSpan.Zero)
+                return;
+
+            await AppConfigProvider.WaitForPotentialChangeAsync(logger, remaining, ct);
+        }
+    }
+
+    private static void LogActiveConfiguration(ILogger logger, AppConfig config)
+    {
+        if (config.PingTargets.Count == 0)
+            logger.LogWarning("Aucune IP à monitorer n'est configurée.");
+
+        if (config.TcpTargets.Count == 0)
+            logger.LogWarning("Aucun endpoint host:port à monitorer n'est configuré.");
+
+        logger.LogInformation(
+            "Configuration active — YAML: {YamlPath} — Ping: {PingCount} — TCP: {TcpCount} — Schedule: {Schedule}",
+            AppConfigProvider.ConfigPath,
+            config.PingTargets.Count,
+            config.TcpTargets.Count,
+            BuildSchedule(config).Description);
     }
 
     private static string BuildLifecycleMessage(string status, string version, string scheduleDescription, int ipCount, int tcpCount, string? shutdownReason = null)
@@ -151,17 +216,7 @@ internal class Program
         return $"<b>{status}</b>\n📦 Version : {version}\n🕒 Rythme : {scheduleDescription}\n🖧 IP surveillées : {ipCount}\n🔌 Ports TCP surveillés : {tcpCount}{reasonLine}";
     }
 
-    private static string GetStartupPushoverSound()
-    {
-        var sound = Environment.GetEnvironmentVariable("PUSHOVER_STARTUP_SOUND");
-        return string.IsNullOrWhiteSpace(sound) ? DefaultStartupSound : sound;
-    }
-
-    private static string GetShutdownPushoverSound()
-    {
-        var sound = Environment.GetEnvironmentVariable("PUSHOVER_SHUTDOWN_SOUND");
-        return string.IsNullOrWhiteSpace(sound) ? DefaultShutdownSound : sound;
-    }
+    private static string BuildTcpKey(string host, int port) => $"{host}:{port}";
 
     private static PosixSignalRegistration? RegisterShutdownSignal(PosixSignal signal, string reason, CancellationTokenSource cts, ILogger logger, Action<string> setShutdownReason)
     {

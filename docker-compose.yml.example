@@ -1,0 +1,16 @@
+services:
+  networkmonitor:
+    build:
+      context: ${NETWORKMONITOR_BUILD_CONTEXT:-.}
+      dockerfile: ${NETWORKMONITOR_DOCKERFILE:-NetworkMonitor/Dockerfile}
+    container_name: ${NETWORKMONITOR_CONTAINER_NAME:-networkmonitor}
+    restart: ${NETWORKMONITOR_RESTART_POLICY:-unless-stopped}
+    environment:
+      DATA_DIR: ${NETWORKMONITOR_DATA_DIR:-/data}
+      CONFIG_YAML_PATH: ${NETWORKMONITOR_CONFIG_PATH:-/config/config.yaml}
+    volumes:
+      - ${NETWORKMONITOR_YAML_SOURCE:-./config.yaml}:${NETWORKMONITOR_CONFIG_PATH:-/config/config.yaml}:ro
+      - ${NETWORKMONITOR_DATA_VOLUME:-networkmonitor-data}:${NETWORKMONITOR_DATA_DIR:-/data}
+
+volumes:
+  ${NETWORKMONITOR_DATA_VOLUME:-networkmonitor-data}:
