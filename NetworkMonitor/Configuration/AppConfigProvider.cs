@@ -12,6 +12,7 @@ sealed class AppConfig
     public int SnoozeDays { get; init; } = 1;
     public string? ScheduleCron { get; init; }
     public int ScheduleIntervalSeconds { get; init; } = 10;
+    public int DashboardRefreshSeconds { get; init; } = 5;
     public IReadOnlyList<string> PingTargets { get; init; } = [];
     public IReadOnlyList<TcpTargetConfig> TcpTargets { get; init; } = [];
 }
@@ -228,6 +229,7 @@ static class AppConfigProvider
             SnoozeDays = yamlConfig.SnoozeDays ?? ParsePositiveInt(Environment.GetEnvironmentVariable("SNOOZE_DAYS"), 1),
             ScheduleCron = FirstNonEmpty(yamlConfig.ScheduleCron, Environment.GetEnvironmentVariable("SCHEDULE_CRON")),
             ScheduleIntervalSeconds = yamlConfig.ScheduleIntervalSeconds ?? ParsePositiveInt(Environment.GetEnvironmentVariable("SCHEDULE_INTERVAL_SECONDS"), 10),
+            DashboardRefreshSeconds = yamlConfig.DashboardRefreshSeconds ?? ParsePositiveInt(Environment.GetEnvironmentVariable("DASHBOARD_REFRESH_SECONDS"), 5),
             PingTargets = MergePingTargets(environmentPingTargets, yamlPingTargets),
             TcpTargets = MergeTcpTargets(environmentTcpTargets, yamlTcpTargets)
         };
@@ -350,6 +352,9 @@ static class AppConfigProvider
                 case "pushover":
                     ParsePushover(lines, ref index, config);
                     break;
+                case "dashboard":
+                    ParseDashboard(lines, ref index, config);
+                    break;
                 case "monitoring":
                     ParseMonitoring(lines, ref index, config);
                     break;
@@ -392,6 +397,19 @@ static class AppConfigProvider
                     break;
                 case "intervalSeconds":
                     config.ScheduleIntervalSeconds = ParseYamlPositiveInt(value, key);
+                    break;
+            }
+        });
+    }
+
+    private static void ParseDashboard(string[] lines, ref int index, YamlAppConfig config)
+    {
+        ParseScalarBlock(lines, ref index, 2, (key, value) =>
+        {
+            switch (key)
+            {
+                case "refreshSeconds":
+                    config.DashboardRefreshSeconds = ParseYamlPositiveInt(value, key);
                     break;
             }
         });
@@ -700,6 +718,7 @@ sealed class YamlAppConfig
     public int? SnoozeDays { get; set; }
     public string? ScheduleCron { get; set; }
     public int? ScheduleIntervalSeconds { get; set; }
+    public int? DashboardRefreshSeconds { get; set; }
     public List<string>? PingTargets { get; set; }
     public List<TcpTargetConfig>? TcpTargets { get; set; }
 }

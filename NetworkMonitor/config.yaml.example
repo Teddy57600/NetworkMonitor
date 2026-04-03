@@ -8,6 +8,9 @@ schedule:
   cron: "*/30 * * * * *"
   # intervalSeconds: 10
 
+dashboard:
+  refreshSeconds: 5
+
 pushover:
   token: "your-pushover-token"
   user: "your-pushover-user"

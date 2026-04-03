@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Net.Sockets;
 using Microsoft.Extensions.Logging;
 
@@ -12,6 +13,10 @@ class TcpPortMonitorState
     private bool _isDown = false;
     private DateTime? _downSince = null;
     private DateTime _lastCheckAllowed = DateTime.UtcNow;
+    private DateTime? _lastCheckAt;
+    private DateTime? _lastSuccessAt;
+    private DateTime? _lastFailureAt;
+    private double? _lastDurationMs;
 
     public TcpPortMonitorState(string host, int port, ILogger logger)
     {
@@ -35,10 +40,17 @@ class TcpPortMonitorState
             return;
         }
 
+        var startedAt = DateTime.UtcNow;
+        var stopwatch = Stopwatch.StartNew();
         bool success = await TcpCheckWithRetry();
+        stopwatch.Stop();
+
+        _lastCheckAt = startedAt;
+        _lastDurationMs = stopwatch.Elapsed.TotalMilliseconds;
 
         if (!success)
         {
+            _lastFailureAt = DateTime.UtcNow;
             _failCount++;
 
             if (!_isDown)
@@ -64,6 +76,7 @@ class TcpPortMonitorState
         }
         else
         {
+            _lastSuccessAt = DateTime.UtcNow;
             if (_isDown)
             {
                 _logger.LogInformation("🟢 RECOVERY : {Host}:{Port} de nouveau accessible", _host, _port);
@@ -75,6 +88,35 @@ class TcpPortMonitorState
             _isDown = false;
             StateStore.SetMonitor($"{_host}:{_port}", new MonitorSnapshot { IsDown = false });
         }
+    }
+
+    public DashboardMonitorSnapshot GetDashboardSnapshot()
+    {
+        var key = $"{_host}:{_port}";
+        var snoozeUntil = PushoverSnooze.GetSnoozeUntil(key);
+        if (snoozeUntil <= DateTime.UtcNow)
+            snoozeUntil = DateTime.MinValue;
+
+        var circuitOpenUntil = _lastCheckAllowed > DateTime.UtcNow
+            ? _lastCheckAllowed
+            : DateTime.MinValue;
+
+        return new DashboardMonitorSnapshot
+        {
+            Key = key,
+            Type = "TCP",
+            DisplayName = key,
+            Status = _isDown ? "DOWN" : "UP",
+            IsDown = _isDown,
+            FailCount = _failCount,
+            LastCheckAt = _lastCheckAt,
+            LastSuccessAt = _lastSuccessAt,
+            LastFailureAt = _lastFailureAt,
+            DownSince = _downSince,
+            CircuitOpenUntil = circuitOpenUntil == DateTime.MinValue ? null : circuitOpenUntil,
+            SnoozeUntil = snoozeUntil == DateTime.MinValue ? null : snoozeUntil,
+            LastDurationMs = _lastDurationMs
+        };
     }
 
     private async Task<bool> TcpCheckWithRetry()

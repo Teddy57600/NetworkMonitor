@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Net.NetworkInformation;
 using Microsoft.Extensions.Logging;
 
@@ -11,6 +12,10 @@ class MonitorState
     private bool _isDown = false;
     private DateTime? _downSince = null;
     private DateTime _lastCheckAllowed = DateTime.UtcNow;
+    private DateTime? _lastCheckAt;
+    private DateTime? _lastSuccessAt;
+    private DateTime? _lastFailureAt;
+    private double? _lastDurationMs;
 
     public MonitorState(string ip, ILogger logger)
     {
@@ -33,10 +38,17 @@ class MonitorState
             return;
         }
 
+        var startedAt = DateTime.UtcNow;
+        var stopwatch = Stopwatch.StartNew();
         bool success = await PingWithRetry();
+        stopwatch.Stop();
+
+        _lastCheckAt = startedAt;
+        _lastDurationMs = stopwatch.Elapsed.TotalMilliseconds;
 
         if (!success)
         {
+            _lastFailureAt = DateTime.UtcNow;
             _failCount++;
 
             if (_failCount >= 3 && !_isDown)
@@ -62,6 +74,7 @@ class MonitorState
         }
         else
         {
+            _lastSuccessAt = DateTime.UtcNow;
             if (_isDown)
             {
                 _logger.LogInformation("🟢 RECOVERY : IP {Ip} de nouveau joignable", _ip);
@@ -73,6 +86,34 @@ class MonitorState
             _isDown = false;
             StateStore.SetMonitor(_ip, new MonitorSnapshot { IsDown = false });
         }
+    }
+
+    public DashboardMonitorSnapshot GetDashboardSnapshot()
+    {
+        var snoozeUntil = PushoverSnooze.GetSnoozeUntil(_ip);
+        if (snoozeUntil <= DateTime.UtcNow)
+            snoozeUntil = DateTime.MinValue;
+
+        var circuitOpenUntil = _lastCheckAllowed > DateTime.UtcNow
+            ? _lastCheckAllowed
+            : DateTime.MinValue;
+
+        return new DashboardMonitorSnapshot
+        {
+            Key = _ip,
+            Type = "Ping",
+            DisplayName = _ip,
+            Status = _isDown ? "DOWN" : "UP",
+            IsDown = _isDown,
+            FailCount = _failCount,
+            LastCheckAt = _lastCheckAt,
+            LastSuccessAt = _lastSuccessAt,
+            LastFailureAt = _lastFailureAt,
+            DownSince = _downSince,
+            CircuitOpenUntil = circuitOpenUntil == DateTime.MinValue ? null : circuitOpenUntil,
+            SnoozeUntil = snoozeUntil == DateTime.MinValue ? null : snoozeUntil,
+            LastDurationMs = _lastDurationMs
+        };
     }
 
     private async Task<bool> PingWithRetry()

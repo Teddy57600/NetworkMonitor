@@ -7,6 +7,9 @@ internal class Program
 {
     static async Task Main(string[] args)
     {
+        var startedAt = DateTimeOffset.Now;
+        var monitorCollectionsLock = new object();
+
         using var loggerFactory = LoggerFactory.Create(builder =>
             builder
                 .SetMinimumLevel(LogLevel.Debug)
@@ -20,14 +23,21 @@ internal class Program
         var version = config.AppVersion;
         var shutdownReason = "arrêt normal";
         var configVersion = AppConfigProvider.Version;
+        var manualCheckTrigger = new ManualCheckTrigger();
+        using var cts = new CancellationTokenSource();
 
         var monitors = CreatePingMonitors(config.PingTargets, loggerFactory);
         var tcpMonitors = CreateTcpMonitors(config.TcpTargets, loggerFactory);
         var schedule = BuildSchedule(config);
+        var dashboardLogger = loggerFactory.CreateLogger("DashboardWeb");
+        var dashboardApp = await DashboardWebServer.StartAsync(
+            () => BuildDashboardSnapshot(startedAt, monitorCollectionsLock, monitors, tcpMonitors),
+            manualCheckTrigger,
+            dashboardLogger,
+            cts.Token);
 
         LogActiveConfiguration(logger, config);
 
-        using var cts = new CancellationTokenSource();
         Console.CancelKeyPress += (_, e) =>
         {
             e.Cancel = true;
@@ -57,22 +67,33 @@ internal class Program
                 {
                     config = AppConfigProvider.Current;
                     version = config.AppVersion;
-                    SyncPingMonitors(monitors, config.PingTargets, loggerFactory, logger);
-                    SyncTcpMonitors(tcpMonitors, config.TcpTargets, loggerFactory, logger);
+                    lock (monitorCollectionsLock)
+                    {
+                        SyncPingMonitors(monitors, config.PingTargets, loggerFactory, logger);
+                        SyncTcpMonitors(tcpMonitors, config.TcpTargets, loggerFactory, logger);
+                    }
                     schedule = BuildSchedule(config);
                     configVersion = AppConfigProvider.Version;
                     LogActiveConfiguration(logger, config);
                 }
 
-                foreach (var monitor in monitors.Values)
+                MonitorState[] pingMonitorBatch;
+                TcpPortMonitorState[] tcpMonitorBatch;
+                lock (monitorCollectionsLock)
+                {
+                    pingMonitorBatch = monitors.Values.ToArray();
+                    tcpMonitorBatch = tcpMonitors.Values.ToArray();
+                }
+
+                foreach (var monitor in pingMonitorBatch)
                     await monitor.Check(cts.Token);
 
-                foreach (var tcpMonitor in tcpMonitors.Values)
+                foreach (var tcpMonitor in tcpMonitorBatch)
                     await tcpMonitor.Check(cts.Token);
 
                 try
                 {
-                    await WaitForNextAsync(schedule, logger, configVersion, cts.Token);
+                    await WaitForNextAsync(schedule, logger, configVersion, manualCheckTrigger, cts.Token);
                 }
                 catch (OperationCanceledException)
                 {
@@ -88,6 +109,7 @@ internal class Program
         }
         finally
         {
+            await dashboardApp.StopAsync(CancellationToken.None);
             AppConfigProvider.RefreshIfChanged(logger);
             config = AppConfigProvider.Current;
             version = config.AppVersion;
@@ -103,6 +125,51 @@ internal class Program
                 config.ShutdownSound,
                 html: true);
         }
+    }
+
+    private static DashboardSnapshot BuildDashboardSnapshot(DateTimeOffset startedAt, object collectionsLock, Dictionary<string, MonitorState> monitors, Dictionary<string, TcpPortMonitorState> tcpMonitors)
+    {
+        MonitorState[] pingMonitors;
+        TcpPortMonitorState[] tcpMonitorStates;
+        lock (collectionsLock)
+        {
+            pingMonitors = monitors.Values.ToArray();
+            tcpMonitorStates = tcpMonitors.Values.ToArray();
+        }
+
+        var pingSnapshots = pingMonitors
+            .Select(monitor => monitor.GetDashboardSnapshot())
+            .OrderBy(snapshot => snapshot.DisplayName, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        var tcpSnapshots = tcpMonitorStates
+            .Select(monitor => monitor.GetDashboardSnapshot())
+            .OrderBy(snapshot => snapshot.DisplayName, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        var allSnapshots = pingSnapshots.Concat(tcpSnapshots).ToArray();
+        var config = AppConfigProvider.Current;
+
+        return new DashboardSnapshot
+        {
+            GeneratedAt = DateTimeOffset.Now,
+            StartedAt = startedAt,
+            Version = config.AppVersion,
+            Schedule = BuildSchedule(config).Description,
+            ConfigPath = AppConfigProvider.ConfigPath,
+            ConfigVersion = AppConfigProvider.Version,
+            TimeZone = TimeZoneInfo.Local.Id,
+            RefreshIntervalSeconds = config.DashboardRefreshSeconds,
+            Summary = new DashboardSummary
+            {
+                Total = allSnapshots.Length,
+                Up = allSnapshots.Count(snapshot => !snapshot.IsDown),
+                Down = allSnapshots.Count(snapshot => snapshot.IsDown),
+                Snoozed = allSnapshots.Count(snapshot => snapshot.SnoozeUntil.HasValue)
+            },
+            PingMonitors = pingSnapshots,
+            TcpMonitors = tcpSnapshots
+        };
     }
 
     private static Dictionary<string, MonitorState> CreatePingMonitors(IReadOnlyList<string> ips, ILoggerFactory loggerFactory)
@@ -171,7 +238,7 @@ internal class Program
         return new IntervalSchedule(config.ScheduleIntervalSeconds);
     }
 
-    private static async Task WaitForNextAsync(ISchedule schedule, ILogger logger, int configVersion, CancellationToken ct)
+    private static async Task WaitForNextAsync(ISchedule schedule, ILogger logger, int configVersion, ManualCheckTrigger manualCheckTrigger, CancellationToken ct)
     {
         var next = schedule.GetNextOccurrence(DateTimeOffset.Now);
         if (next is null)
@@ -187,7 +254,22 @@ internal class Program
             if (remaining <= TimeSpan.Zero)
                 return;
 
-            await AppConfigProvider.WaitForPotentialChangeAsync(logger, remaining, ct);
+            var delay = remaining > TimeSpan.FromSeconds(30)
+                ? TimeSpan.FromSeconds(30)
+                : remaining;
+
+            using var waitCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            var configWait = AppConfigProvider.WaitForPotentialChangeAsync(logger, delay, waitCts.Token);
+            var manualCheckWait = manualCheckTrigger.WaitAsync(delay, waitCts.Token);
+            var completedTask = await Task.WhenAny(configWait, manualCheckWait);
+            waitCts.Cancel();
+            await completedTask;
+
+            if (completedTask == manualCheckWait && manualCheckWait.Result)
+            {
+                logger.LogInformation("Cycle de vérification immédiat demandé depuis le tableau de bord web.");
+                return;
+            }
         }
     }
 

@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>NetworkMonitor Dashboard</title>
+    <link rel="stylesheet" href="/site.css" />
+</head>
+<body>
+    <div class="shell">
+        <header class="hero">
+            <div>
+                <p class="eyebrow">NetworkMonitor</p>
+                <h1>Tableau de bord</h1>
+                <p id="subtitle" class="subtitle">Chargement...</p>
+                <div class="hero-actions">
+                    <button id="checkNowButton" type="button" class="action-button primary">Lancer un check immédiat</button>
+                    <span id="actionStatus" class="action-status">Aucune action en cours.</span>
+                </div>
+            </div>
+            <div class="hero-badges">
+                <span id="generatedAt" class="badge">--</span>
+                <span id="timeZone" class="badge badge-muted">--</span>
+            </div>
+        </header>
+
+        <section class="stats-grid">
+            <article class="stat-card">
+                <span>Total</span>
+                <strong id="totalCount">0</strong>
+            </article>
+            <article class="stat-card success">
+                <span>UP</span>
+                <strong id="upCount">0</strong>
+            </article>
+            <article class="stat-card danger">
+                <span>DOWN</span>
+                <strong id="downCount">0</strong>
+            </article>
+            <article class="stat-card warning">
+                <span>Snoozés</span>
+                <strong id="snoozedCount">0</strong>
+            </article>
+        </section>
+
+        <section class="panel-grid">
+            <article class="panel">
+                <div class="panel-title">Informations générales</div>
+                <dl class="meta-list">
+                    <div><dt>Version</dt><dd id="version">--</dd></div>
+                    <div><dt>Planification</dt><dd id="schedule">--</dd></div>
+                    <div><dt>Config</dt><dd id="configPath">--</dd></div>
+                    <div><dt>Version config</dt><dd id="configVersion">--</dd></div>
+                    <div><dt>Démarré</dt><dd id="startedAt">--</dd></div>
+                    <div><dt>Refresh UI</dt><dd id="refreshInterval">--</dd></div>
+                </dl>
+            </article>
+        </section>
+
+        <section class="panel">
+            <div class="panel-header">
+                <div>
+                    <h2>Moniteurs Ping</h2>
+                    <p>Disponibilité des IP surveillées</p>
+                </div>
+            </div>
+            <div id="pingMonitors" class="cards-grid"></div>
+        </section>
+
+        <section class="panel">
+            <div class="panel-header">
+                <div>
+                    <h2>Moniteurs TCP</h2>
+                    <p>Disponibilité des endpoints host:port</p>
+                </div>
+            </div>
+            <div id="tcpMonitors" class="cards-grid"></div>
+        </section>
+    </div>
+
+    <template id="monitor-template">
+        <article class="monitor-card">
+            <div class="monitor-head">
+                <div>
+                    <span class="monitor-type"></span>
+                    <h3 class="monitor-name"></h3>
+                </div>
+                <span class="monitor-state"></span>
+            </div>
+            <div class="monitor-actions"></div>
+            <dl class="monitor-meta"></dl>
+        </article>
+    </template>
+
+    <script src="/app.js"></script>
+</body>
+</html>

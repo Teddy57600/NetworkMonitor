@@ -6,7 +6,7 @@ ARG LAUNCHING_FROM_VS
 ARG FINAL_BASE_IMAGE=${LAUNCHING_FROM_VS:+aotdebug}
 
 # Cet index est utilisé lors de l’exécution à partir de VS en mode rapide (par défaut pour la configuration de débogage)
-FROM mcr.microsoft.com/dotnet/runtime:11.0-preview AS base
+FROM mcr.microsoft.com/dotnet/aspnet:11.0-preview AS base
 WORKDIR /app
 
 
@@ -49,6 +49,7 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 ENV TZ=Europe/Paris
+ENV ASPNETCORE_URLS=http://0.0.0.0:8080
 ENV PUSHOVER_TOKEN=""
 ENV PUSHOVER_USER=""
 ENV PUSHOVER_STARTUP_SOUND="cosmic"
@@ -60,7 +61,9 @@ ENV DATA_DIR=/data
 
 VOLUME /data
 
+EXPOSE 8080
+
 ENTRYPOINT ["./NetworkMonitor"]
 
-ENV APP_VERSION="1.6.1"
-LABEL Version="1.6.1"
+ENV APP_VERSION="1.7.0"
+LABEL Version="1.7.0"

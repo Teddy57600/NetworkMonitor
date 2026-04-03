@@ -22,6 +22,7 @@ Elle permet de :
 
 - surveiller des **adresses IP** via `ping`
 - surveiller des **services TCP** via `host:port`
+- afficher un **tableau de bord web responsive** avec vue temps réel
 - envoyer des notifications **Pushover** lors d'une panne, d'une reprise et d'une indisponibilité prolongée
 - envoyer une notification **au démarrage et à l'arrêt** du service
 - persister l'état des moniteurs et des snoozes dans `state.json`
@@ -77,6 +78,14 @@ Le projet cible **.NET 11** et active la **publication Native AOT**.
 ### Observabilité
 - logs console en temps réel
 - logs journaliers dans `DATA_DIR/logs`
+- tableau de bord web embarqué sur le port **8080** par défaut
+
+### Interface web
+- API JSON `GET /api/dashboard`
+- endpoint de santé `GET /api/health`
+- action web pour demander un **check immédiat**
+- action web pour **supprimer un snooze** sur un moniteur
+- rafraîchissement automatique configurable
 
 ---
 
@@ -99,6 +108,10 @@ NetworkMonitor/
 ├─ NetworkMonitor/
 │  ├─ Configuration/
 │  │  └─ AppConfigProvider.cs
+│  ├─ Dashboard/
+│  │  ├─ DashboardSnapshotModels.cs
+│  │  ├─ DashboardWebServer.cs
+│  │  └─ ManualCheckTrigger.cs
 │  ├─ Monitoring/
 │  │  ├─ MonitorState.cs
 │  │  └─ TcpPortMonitorState.cs
@@ -115,7 +128,11 @@ NetworkMonitor/
 │  ├─ StateStore.cs
 │  ├─ Dockerfile
 │  ├─ NetworkMonitor.csproj
-│  └─ config.yaml.example
+│  ├─ config.yaml.example
+│  └─ wwwroot/
+│     ├─ app.js
+│     ├─ index.html
+│     └─ site.css
 └─ README.md
 ```
 
@@ -179,10 +196,12 @@ Résultat effectif :
 | `PUSHOVER_STARTUP_SOUND` | Son de la notification de démarrage | `cosmic` | `cosmic` |
 | `PUSHOVER_SHUTDOWN_SOUND` | Son de la notification d'arrêt | `falling` | `falling` |
 | `SNOOZE_DAYS` | Nombre de jours de snooze après acquittement | `3` | `1` |
+| `DASHBOARD_REFRESH_SECONDS` | Intervalle de rafraîchissement automatique de l'interface web | `5` | `5` |
 | `DATA_DIR` | Répertoire de persistance (`state.json`, logs, config YAML par défaut) | `/data` | `.` |
 | `APP_VERSION` | Version affichée dans les logs/notifications | `1.5.0` | `inconnue` |
 | `CONFIG_YAML_PATH` | Chemin explicite du fichier YAML | `/data/config.yaml` | `DATA_DIR/config.yaml` |
 | `TZ` | Fuseau horaire du conteneur | `Europe/Paris` | `Europe/Paris` dans l'image Docker |
+| `ASPNETCORE_URLS` | URLs d'écoute du serveur web embarqué | `http://0.0.0.0:8080` | `http://0.0.0.0:8080` |
 
 ### Priorité entre CRON et intervalle
 
@@ -309,6 +328,9 @@ schedule:
   cron: "*/30 * * * * *"
   # intervalSeconds: 10
 
+dashboard:
+  refreshSeconds: 5
+
 pushover:
   token: "your-pushover-token"
   user: "your-pushover-user"
@@ -333,6 +355,7 @@ monitoring:
 | `snoozeDays` | Durée du snooze après acquittement |
 | `schedule.cron` | Planification CRON |
 | `schedule.intervalSeconds` | Planification par intervalle |
+| `dashboard.refreshSeconds` | Intervalle de rafraîchissement de l'interface web |
 | `pushover.token` | Token Pushover |
 | `pushover.user` | Utilisateur/groupe Pushover |
 | `pushover.startupSound` | Son de démarrage |
@@ -455,10 +478,17 @@ Exemple d'arborescence :
 $env:PING_TARGETS="8.8.8.8,1.1.1.1"
 $env:TCP_TARGETS="google.com:443,localhost:22"
 $env:SCHEDULE_INTERVAL_SECONDS="15"
+$env:DASHBOARD_REFRESH_SECONDS="5"
 $env:PUSHOVER_TOKEN="your-token"
 $env:PUSHOVER_USER="your-user"
 $env:DATA_DIR=".data"
 dotnet run --project .\NetworkMonitor\NetworkMonitor.csproj
+```
+
+Le tableau de bord est ensuite disponible sur :
+
+```text
+http://localhost:8080
 ```
 
 ### Exécution locale avec YAML
@@ -481,6 +511,7 @@ Le projet contient un `Dockerfile` prêt à l'emploi.
 - installation de `tzdata`
 - fuseau horaire du conteneur fixé à **`Europe/Paris`**
 - volume `/data` pour la persistance
+- dashboard web exposé sur le port **8080**
 
 ### Build
 
@@ -493,9 +524,11 @@ docker build -t networkmonitor .
 ```bash
 docker run -d \
   --name networkmonitor \
+  -p 8080:8080 \
   -e PING_TARGETS="8.8.8.8,1.1.1.1" \
   -e TCP_TARGETS="google.com:443,192.168.1.10:22" \
   -e SCHEDULE_CRON="*/3 * * * *" \
+  -e DASHBOARD_REFRESH_SECONDS="5" \
   -e PUSHOVER_TOKEN="your-token" \
   -e PUSHOVER_USER="your-user" \
   -e PUSHOVER_STARTUP_SOUND="cosmic" \
@@ -506,13 +539,15 @@ docker run -d \
   networkmonitor
 ```
 
-### Run avec YAML monté dans `/data`
+### Run avec YAML monté dans `/config`
 
 ```bash
 docker run -d \
   --name networkmonitor \
+  -p 8080:8080 \
   -e DATA_DIR="/data" \
-  -v ${PWD}/config.yaml:/data/config.yaml:ro \
+  -e CONFIG_YAML_PATH="/config/config.yaml" \
+  -v ${PWD}/config.yaml:/config/config.yaml:ro \
   -v networkmonitor-data:/data \
   networkmonitor
 ```
@@ -538,6 +573,8 @@ services:
     environment:
       DATA_DIR: /data
       CONFIG_YAML_PATH: /config/config.yaml
+    ports:
+      - 8080:8080
     volumes:
       - ./config.yaml:/config/config.yaml:ro
       - networkmonitor-data:/data
@@ -547,6 +584,30 @@ volumes:
 ```
 
 > Sous Docker, l'arrêt via `docker stop` envoie un `SIGTERM`. L'application intercepte ce signal pour effectuer un arrêt propre et envoyer la notification de fin.
+
+### Tableau de bord web et API
+
+Par défaut, l'interface web est disponible ici :
+
+```text
+http://localhost:8080
+```
+
+Endpoints utiles :
+
+- `GET /api/dashboard` : snapshot complet du dashboard
+- `GET /api/health` : endpoint de santé simple
+- `POST /api/actions/check-now` : demande un cycle de vérification immédiat
+- `POST /api/actions/clear-snooze?key=...` : supprime le snooze d'un moniteur
+
+Le dashboard affiche notamment :
+
+- les compteurs globaux UP / DOWN / snoozés
+- les moniteurs Ping et TCP
+- la date du dernier contrôle, du dernier succès et du dernier échec
+- la durée du dernier test
+- l'état du circuit breaker
+- la fin éventuelle du snooze
 
 ---
 
