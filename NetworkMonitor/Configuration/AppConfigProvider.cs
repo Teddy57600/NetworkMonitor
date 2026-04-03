@@ -208,6 +208,16 @@ static class AppConfigProvider
 
     private static AppConfig BuildEffectiveConfig(YamlAppConfig yamlConfig)
     {
+        var environmentPingTargets = ParsePingTargetsFromEnvironment();
+        var yamlPingTargets = yamlConfig.PingTargets is not null
+            ? NormalizePingTargets(yamlConfig.PingTargets)
+            : [];
+
+        var environmentTcpTargets = ParseTcpTargetsFromEnvironment();
+        var yamlTcpTargets = yamlConfig.TcpTargets is not null
+            ? NormalizeTcpTargets(yamlConfig.TcpTargets)
+            : [];
+
         return new AppConfig
         {
             AppVersion = FirstNonEmpty(yamlConfig.AppVersion, Environment.GetEnvironmentVariable("APP_VERSION")) ?? "inconnue",
@@ -218,9 +228,26 @@ static class AppConfigProvider
             SnoozeDays = yamlConfig.SnoozeDays ?? ParsePositiveInt(Environment.GetEnvironmentVariable("SNOOZE_DAYS"), 1),
             ScheduleCron = FirstNonEmpty(yamlConfig.ScheduleCron, Environment.GetEnvironmentVariable("SCHEDULE_CRON")),
             ScheduleIntervalSeconds = yamlConfig.ScheduleIntervalSeconds ?? ParsePositiveInt(Environment.GetEnvironmentVariable("SCHEDULE_INTERVAL_SECONDS"), 10),
-            PingTargets = yamlConfig.PingTargets is not null ? NormalizePingTargets(yamlConfig.PingTargets) : ParsePingTargetsFromEnvironment(),
-            TcpTargets = yamlConfig.TcpTargets is not null ? NormalizeTcpTargets(yamlConfig.TcpTargets) : ParseTcpTargetsFromEnvironment()
+            PingTargets = MergePingTargets(environmentPingTargets, yamlPingTargets),
+            TcpTargets = MergeTcpTargets(environmentTcpTargets, yamlTcpTargets)
         };
+    }
+
+    private static IReadOnlyList<string> MergePingTargets(IReadOnlyList<string> environmentTargets, IReadOnlyList<string> yamlTargets)
+    {
+        return environmentTargets
+            .Concat(yamlTargets)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+    }
+
+    private static IReadOnlyList<TcpTargetConfig> MergeTcpTargets(IReadOnlyList<TcpTargetConfig> environmentTargets, IReadOnlyList<TcpTargetConfig> yamlTargets)
+    {
+        return environmentTargets
+            .Concat(yamlTargets)
+            .GroupBy(target => $"{target.Host}:{target.Port}", StringComparer.OrdinalIgnoreCase)
+            .Select(group => group.First())
+            .ToArray();
     }
 
     private static IReadOnlyList<string> NormalizePingTargets(IReadOnlyList<string> targets)

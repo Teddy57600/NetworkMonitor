@@ -138,6 +138,34 @@ Pour chaque valeur :
 - sinon, la variable d'environnement correspondante est utilisée
 - sinon, la valeur par défaut s'applique
 
+Exception pour les cibles de supervision :
+
+- `pingTargets` du YAML **s'ajoute** à `PING_TARGETS`
+- `tcpTargets` du YAML **s'ajoute** à `TCP_TARGETS`
+- les doublons sont supprimés automatiquement
+
+Exemple :
+
+```text
+PING_TARGETS=1.1.1.1
+TCP_TARGETS=google.com:443
+```
+
+et dans le YAML :
+
+```yaml
+monitoring:
+  pingTargets:
+    - 8.8.8.8
+  tcpTargets:
+    - localhost:80
+```
+
+Résultat effectif :
+
+- ping monitorés : `1.1.1.1`, `8.8.8.8`
+- endpoints TCP monitorés : `google.com:443`, `localhost:80`
+
 ### Variables d'environnement disponibles
 
 | Variable | Description | Exemple | Valeur par défaut |

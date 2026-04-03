@@ -1,6 +1,9 @@
 appVersion: "1.6.0"
 snoozeDays: 3
 
+# Les cibles définies ici s'ajoutent à celles fournies via PING_TARGETS et TCP_TARGETS.
+# Les doublons sont supprimés automatiquement.
+
 schedule:
   cron: "*/30 * * * * *"
   # intervalSeconds: 10

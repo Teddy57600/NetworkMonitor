@@ -62,5 +62,5 @@ VOLUME /data
 
 ENTRYPOINT ["./NetworkMonitor"]
 
-ENV APP_VERSION="1.5.0"
-LABEL Version="1.5.0"
+ENV APP_VERSION="1.6.1"
+LABEL Version="1.6.1"
