@@ -18,7 +18,6 @@ static class DashboardWebServer
             builder.WebHost.UseUrls("http://0.0.0.0:8080");
 
         var app = builder.Build();
-        var config = AppConfigProvider.Current;
 
         var webRoot = Path.Combine(AppContext.BaseDirectory, "wwwroot");
         if (Directory.Exists(webRoot))
@@ -36,7 +35,8 @@ static class DashboardWebServer
 
         app.MapGet("/login", async context =>
         {
-            if (!config.DashboardAuthEnabled || DashboardSessionAuth.IsAuthenticated(context.Request))
+            var currentConfig = AppConfigProvider.Current;
+            if (!currentConfig.DashboardAuthEnabled || DashboardSessionAuth.IsAuthenticated(context.Request))
             {
                 context.Response.Redirect("/");
                 return;
@@ -50,7 +50,12 @@ static class DashboardWebServer
             }
 
             context.Response.ContentType = "text/html; charset=utf-8";
-            await context.Response.SendFileAsync(loginPath, context.RequestAborted);
+            var html = await File.ReadAllTextAsync(loginPath, context.RequestAborted);
+            html = html
+                .Replace("{{APP_VERSION}}", currentConfig.AppVersion)
+                .Replace("{{TIMEZONE}}", TimeZoneInfo.Local.Id);
+
+            await context.Response.WriteAsync(html, context.RequestAborted);
         });
 
         app.MapPost("/login", async context =>
@@ -83,39 +88,43 @@ static class DashboardWebServer
             return Task.CompletedTask;
         });
 
-        if (config.DashboardAuthEnabled)
+        app.Use(async (context, next) =>
         {
-            app.Use(async (context, next) =>
+            var currentConfig = AppConfigProvider.Current;
+            if (!currentConfig.DashboardAuthEnabled)
             {
-                if (context.Request.Path.StartsWithSegments("/login", StringComparison.OrdinalIgnoreCase))
+                await next(context);
+                return;
+            }
+
+            if (context.Request.Path.StartsWithSegments("/login", StringComparison.OrdinalIgnoreCase))
+            {
+                await next(context);
+                return;
+            }
+
+            if (DashboardSessionAuth.IsAuthenticated(context.Request))
+            {
+                await next(context);
+                return;
+            }
+
+            if (context.Request.Path.StartsWithSegments("/api", StringComparison.OrdinalIgnoreCase))
+            {
+                var payload = JsonSerializer.Serialize(new DashboardActionResponse
                 {
-                    await next(context);
-                    return;
-                }
+                    Success = false,
+                    Message = "Authentification requise."
+                }, typeof(DashboardActionResponse), DashboardJsonContext.Default);
 
-                if (DashboardSessionAuth.IsAuthenticated(context.Request))
-                {
-                    await next(context);
-                    return;
-                }
+                context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+                context.Response.ContentType = "application/json";
+                await context.Response.WriteAsync(payload, context.RequestAborted);
+                return;
+            }
 
-                if (context.Request.Path.StartsWithSegments("/api", StringComparison.OrdinalIgnoreCase))
-                {
-                    var payload = JsonSerializer.Serialize(new DashboardActionResponse
-                    {
-                        Success = false,
-                        Message = "Authentification requise."
-                    }, typeof(DashboardActionResponse), DashboardJsonContext.Default);
-
-                    context.Response.StatusCode = StatusCodes.Status401Unauthorized;
-                    context.Response.ContentType = "application/json";
-                    await context.Response.WriteAsync(payload, context.RequestAborted);
-                    return;
-                }
-
-                context.Response.Redirect("/login");
-            });
-        }
+            context.Response.Redirect("/login");
+        });
 
         app.MapGet("/api/dashboard", () =>
         {
@@ -233,7 +242,7 @@ static class DashboardWebServer
 
         app.MapFallback(async context =>
         {
-            if (config.DashboardAuthEnabled && !DashboardSessionAuth.IsAuthenticated(context.Request))
+            if (AppConfigProvider.Current.DashboardAuthEnabled && !DashboardSessionAuth.IsAuthenticated(context.Request))
             {
                 context.Response.Redirect("/login");
                 return;

@@ -71,6 +71,12 @@ body {
     flex-wrap: wrap;
     margin-top: 1rem;
 }
+.login-meta {
+    display: flex;
+    gap: .75rem;
+    flex-wrap: wrap;
+    margin-top: 1rem;
+}
 .action-status {
     color: var(--muted);
     font-size: .95rem;
