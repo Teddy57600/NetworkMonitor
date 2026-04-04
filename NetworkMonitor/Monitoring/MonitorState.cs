@@ -103,6 +103,7 @@ class MonitorState
             Key = _ip,
             Type = "Ping",
             DisplayName = _ip,
+            Source = AppConfigProvider.GetPingTargetSource(_ip),
             Status = _isDown ? "DOWN" : "UP",
             IsDown = _isDown,
             FailCount = _failCount,

@@ -12,6 +12,10 @@ sealed class AppConfig
     public int SnoozeDays { get; init; } = 1;
     public string? ScheduleCron { get; init; }
     public int ScheduleIntervalSeconds { get; init; } = 10;
+    public bool DashboardEnabled { get; init; } = true;
+    public bool DashboardAuthEnabled { get; init; }
+    public string DashboardAuthUsername { get; init; } = string.Empty;
+    public string DashboardAuthPassword { get; init; } = string.Empty;
     public int DashboardRefreshSeconds { get; init; } = 5;
     public IReadOnlyList<string> PingTargets { get; init; } = [];
     public IReadOnlyList<TcpTargetConfig> TcpTargets { get; init; } = [];
@@ -21,6 +25,12 @@ sealed class TcpTargetConfig
 {
     public string Host { get; init; } = string.Empty;
     public int Port { get; init; }
+}
+
+sealed class ConfigMutationResult
+{
+    public bool Success { get; init; }
+    public string Message { get; init; } = string.Empty;
 }
 
 static class AppConfigProvider
@@ -119,6 +129,170 @@ static class AppConfigProvider
         return _changeSignal.WaitAsync(delay, ct);
     }
 
+    public static ConfigMutationResult AddPingTarget(string target)
+    {
+        target = target.Trim();
+        if (string.IsNullOrWhiteSpace(target))
+        {
+            return new ConfigMutationResult
+            {
+                Success = false,
+                Message = "La cible ping est obligatoire."
+            };
+        }
+
+        lock (_lock)
+        {
+            if (BuildEffectiveConfig(_yamlConfig).PingTargets.Contains(target, StringComparer.OrdinalIgnoreCase))
+            {
+                return new ConfigMutationResult
+                {
+                    Success = true,
+                    Message = $"La cible ping '{target}' est déjà monitorée."
+                };
+            }
+
+            var updated = CloneYamlConfig(_yamlConfig);
+            updated.PingTargets = NormalizePingTargets([.. (updated.PingTargets ?? []), target]).ToList();
+            return SaveYamlConfig(updated, $"La cible ping '{target}' a été ajoutée au fichier YAML.");
+        }
+    }
+
+    public static string GetPingTargetSource(string target)
+    {
+        lock (_lock)
+        {
+            var inEnvironment = ParsePingTargetsFromEnvironment().Contains(target, StringComparer.OrdinalIgnoreCase);
+            var inYaml = NormalizePingTargets(_yamlConfig.PingTargets ?? []).Contains(target, StringComparer.OrdinalIgnoreCase);
+            return BuildSourceLabel(inEnvironment, inYaml);
+        }
+    }
+
+    public static ConfigMutationResult RemovePingTarget(string target)
+    {
+        target = target.Trim();
+        if (string.IsNullOrWhiteSpace(target))
+        {
+            return new ConfigMutationResult
+            {
+                Success = false,
+                Message = "La cible ping est obligatoire."
+            };
+        }
+
+        lock (_lock)
+        {
+            var envTargets = ParsePingTargetsFromEnvironment();
+            var yamlTargets = NormalizePingTargets(_yamlConfig.PingTargets ?? []);
+            var inEnvironment = envTargets.Contains(target, StringComparer.OrdinalIgnoreCase);
+            var inYaml = yamlTargets.Contains(target, StringComparer.OrdinalIgnoreCase);
+
+            if (!inYaml)
+            {
+                return new ConfigMutationResult
+                {
+                    Success = false,
+                    Message = inEnvironment
+                        ? $"La cible ping '{target}' est fournie par variable d'environnement et ne peut pas être supprimée depuis l'interface web."
+                        : $"La cible ping '{target}' n'existe pas dans le fichier YAML."
+                };
+            }
+
+            var updated = CloneYamlConfig(_yamlConfig);
+            updated.PingTargets = yamlTargets
+                .Where(existing => !string.Equals(existing, target, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+
+            var successMessage = inEnvironment
+                ? $"La cible ping '{target}' a été supprimée du YAML, mais reste monitorée via les variables d'environnement."
+                : $"La cible ping '{target}' a été supprimée du fichier YAML.";
+
+            return SaveYamlConfig(updated, successMessage);
+        }
+    }
+
+    public static ConfigMutationResult AddTcpTarget(string host, int port)
+    {
+        host = host.Trim();
+        if (string.IsNullOrWhiteSpace(host) || port <= 0)
+        {
+            return new ConfigMutationResult
+            {
+                Success = false,
+                Message = "L'hôte TCP et un port strictement positif sont obligatoires."
+            };
+        }
+
+        lock (_lock)
+        {
+            if (BuildEffectiveConfig(_yamlConfig).TcpTargets.Any(target => string.Equals(target.Host, host, StringComparison.OrdinalIgnoreCase) && target.Port == port))
+            {
+                return new ConfigMutationResult
+                {
+                    Success = true,
+                    Message = $"L'endpoint TCP '{host}:{port}' est déjà monitoré."
+                };
+            }
+
+            var updated = CloneYamlConfig(_yamlConfig);
+            updated.TcpTargets = NormalizeTcpTargets([.. (updated.TcpTargets ?? []), new TcpTargetConfig { Host = host, Port = port }]).ToList();
+            return SaveYamlConfig(updated, $"L'endpoint TCP '{host}:{port}' a été ajouté au fichier YAML.");
+        }
+    }
+
+    public static string GetTcpTargetSource(string host, int port)
+    {
+        lock (_lock)
+        {
+            var inEnvironment = ParseTcpTargetsFromEnvironment().Any(target => string.Equals(target.Host, host, StringComparison.OrdinalIgnoreCase) && target.Port == port);
+            var inYaml = NormalizeTcpTargets(_yamlConfig.TcpTargets ?? []).Any(target => string.Equals(target.Host, host, StringComparison.OrdinalIgnoreCase) && target.Port == port);
+            return BuildSourceLabel(inEnvironment, inYaml);
+        }
+    }
+
+    public static ConfigMutationResult RemoveTcpTarget(string host, int port)
+    {
+        host = host.Trim();
+        if (string.IsNullOrWhiteSpace(host) || port <= 0)
+        {
+            return new ConfigMutationResult
+            {
+                Success = false,
+                Message = "L'hôte TCP et un port strictement positif sont obligatoires."
+            };
+        }
+
+        lock (_lock)
+        {
+            var envTargets = ParseTcpTargetsFromEnvironment();
+            var yamlTargets = NormalizeTcpTargets(_yamlConfig.TcpTargets ?? []);
+            var inEnvironment = envTargets.Any(target => string.Equals(target.Host, host, StringComparison.OrdinalIgnoreCase) && target.Port == port);
+            var inYaml = yamlTargets.Any(target => string.Equals(target.Host, host, StringComparison.OrdinalIgnoreCase) && target.Port == port);
+
+            if (!inYaml)
+            {
+                return new ConfigMutationResult
+                {
+                    Success = false,
+                    Message = inEnvironment
+                        ? $"L'endpoint TCP '{host}:{port}' est fourni par variable d'environnement et ne peut pas être supprimé depuis l'interface web."
+                        : $"L'endpoint TCP '{host}:{port}' n'existe pas dans le fichier YAML."
+                };
+            }
+
+            var updated = CloneYamlConfig(_yamlConfig);
+            updated.TcpTargets = yamlTargets
+                .Where(target => !string.Equals(target.Host, host, StringComparison.OrdinalIgnoreCase) || target.Port != port)
+                .ToList();
+
+            var successMessage = inEnvironment
+                ? $"L'endpoint TCP '{host}:{port}' a été supprimé du YAML, mais reste monitoré via les variables d'environnement."
+                : $"L'endpoint TCP '{host}:{port}' a été supprimé du fichier YAML.";
+
+            return SaveYamlConfig(updated, successMessage);
+        }
+    }
+
     private static void EnsureWatcher(ILogger logger)
     {
         var path = ConfigPath;
@@ -198,6 +372,59 @@ static class AppConfigProvider
             _reloadRequested = true;
         }
 
+        PulseChangeSignal();
+    }
+
+    private static ConfigMutationResult SaveYamlConfig(YamlAppConfig updatedConfig, string successMessage)
+    {
+        var path = ConfigPath;
+        var directory = Path.GetDirectoryName(path);
+        if (string.IsNullOrWhiteSpace(directory))
+            directory = Directory.GetCurrentDirectory();
+
+        var tempPath = Path.Combine(directory, $".{Path.GetFileName(path)}.tmp");
+
+        try
+        {
+            Directory.CreateDirectory(directory);
+            File.WriteAllText(tempPath, BuildYamlContent(updatedConfig));
+            File.Move(tempPath, path, true);
+
+            _yamlConfig = updatedConfig;
+            _fileExists = true;
+            _lastWriteTimeUtc = File.GetLastWriteTimeUtc(path);
+            _reloadRequested = false;
+            _version++;
+
+            PulseChangeSignal();
+
+            return new ConfigMutationResult
+            {
+                Success = true,
+                Message = successMessage
+            };
+        }
+        catch (Exception ex)
+        {
+            try
+            {
+                if (File.Exists(tempPath))
+                    File.Delete(tempPath);
+            }
+            catch
+            {
+            }
+
+            return new ConfigMutationResult
+            {
+                Success = false,
+                Message = $"Impossible d'écrire la configuration YAML '{path}' : {ex.Message}"
+            };
+        }
+    }
+
+    private static void PulseChangeSignal()
+    {
         try
         {
             _changeSignal.Release();
@@ -205,6 +432,119 @@ static class AppConfigProvider
         catch (SemaphoreFullException)
         {
         }
+    }
+
+    private static YamlAppConfig CloneYamlConfig(YamlAppConfig source)
+    {
+        return new YamlAppConfig
+        {
+            AppVersion = source.AppVersion,
+            PushoverToken = source.PushoverToken,
+            PushoverUser = source.PushoverUser,
+            StartupSound = source.StartupSound,
+            ShutdownSound = source.ShutdownSound,
+            SnoozeDays = source.SnoozeDays,
+            ScheduleCron = source.ScheduleCron,
+            ScheduleIntervalSeconds = source.ScheduleIntervalSeconds,
+            DashboardRefreshSeconds = source.DashboardRefreshSeconds,
+            PingTargets = source.PingTargets is null ? null : [.. source.PingTargets],
+            TcpTargets = source.TcpTargets is null ? null : [.. source.TcpTargets.Select(target => new TcpTargetConfig { Host = target.Host, Port = target.Port })]
+        };
+    }
+
+    private static string BuildYamlContent(YamlAppConfig config)
+    {
+        var lines = new List<string>();
+
+        if (!string.IsNullOrWhiteSpace(config.AppVersion))
+            lines.Add($"appVersion: {QuoteYaml(config.AppVersion)}");
+
+        if (config.SnoozeDays is int snoozeDays)
+            lines.Add($"snoozeDays: {snoozeDays}");
+
+        AppendBlankLine(lines);
+        AppendScalarSection(lines, "schedule", [
+            ("cron", config.ScheduleCron, false),
+            ("intervalSeconds", config.ScheduleIntervalSeconds?.ToString(), true)
+        ]);
+
+        AppendBlankLine(lines);
+        AppendScalarSection(lines, "dashboard", [
+            ("refreshSeconds", config.DashboardRefreshSeconds?.ToString(), true)
+        ]);
+
+        AppendBlankLine(lines);
+        AppendScalarSection(lines, "pushover", [
+            ("token", config.PushoverToken, false),
+            ("user", config.PushoverUser, false),
+            ("startupSound", config.StartupSound, false),
+            ("shutdownSound", config.ShutdownSound, false)
+        ]);
+
+        if ((config.PingTargets?.Count ?? 0) > 0 || (config.TcpTargets?.Count ?? 0) > 0)
+        {
+            AppendBlankLine(lines);
+            lines.Add("monitoring:");
+
+            if (config.PingTargets?.Count > 0)
+            {
+                lines.Add("  pingTargets:");
+                foreach (var target in config.PingTargets)
+                    lines.Add($"    - {QuoteYaml(target)}");
+            }
+
+            if (config.TcpTargets?.Count > 0)
+            {
+                lines.Add("  tcpTargets:");
+                foreach (var target in config.TcpTargets)
+                {
+                    lines.Add($"    - host: {QuoteYaml(target.Host)}");
+                    lines.Add($"      port: {target.Port}");
+                }
+            }
+        }
+
+        while (lines.Count > 0 && string.IsNullOrWhiteSpace(lines[^1]))
+            lines.RemoveAt(lines.Count - 1);
+
+        return string.Join(Environment.NewLine, lines) + Environment.NewLine;
+    }
+
+    private static void AppendScalarSection(List<string> lines, string sectionName, IEnumerable<(string Key, string? Value, bool IsNumeric)> entries)
+    {
+        var sectionEntries = entries.Where(entry => !string.IsNullOrWhiteSpace(entry.Value)).ToArray();
+        if (sectionEntries.Length == 0)
+            return;
+
+        lines.Add($"{sectionName}:");
+        foreach (var entry in sectionEntries)
+        {
+            var renderedValue = entry.IsNumeric ? entry.Value! : QuoteYaml(entry.Value!);
+            lines.Add($"  {entry.Key}: {renderedValue}");
+        }
+    }
+
+    private static void AppendBlankLine(List<string> lines)
+    {
+        if (lines.Count > 0 && !string.IsNullOrWhiteSpace(lines[^1]))
+            lines.Add(string.Empty);
+    }
+
+    private static string QuoteYaml(string value)
+    {
+        var escaped = value.Replace("\\", "\\\\").Replace("\"", "\\\"");
+        return $"\"{escaped}\"";
+    }
+
+    private static string BuildSourceLabel(bool inEnvironment, bool inYaml)
+    {
+        return (inEnvironment, inYaml) switch
+        {
+            (true, true) => "ENV + YAML",
+            (true, false) => "ENV",
+            (false, true) => "YAML",
+            _ => "Inconnue"
+        };
     }
 
     private static AppConfig BuildEffectiveConfig(YamlAppConfig yamlConfig)
@@ -229,6 +569,10 @@ static class AppConfigProvider
             SnoozeDays = yamlConfig.SnoozeDays ?? ParsePositiveInt(Environment.GetEnvironmentVariable("SNOOZE_DAYS"), 1),
             ScheduleCron = FirstNonEmpty(yamlConfig.ScheduleCron, Environment.GetEnvironmentVariable("SCHEDULE_CRON")),
             ScheduleIntervalSeconds = yamlConfig.ScheduleIntervalSeconds ?? ParsePositiveInt(Environment.GetEnvironmentVariable("SCHEDULE_INTERVAL_SECONDS"), 10),
+            DashboardEnabled = yamlConfig.DashboardEnabled ?? ParseBoolean(Environment.GetEnvironmentVariable("DASHBOARD_ENABLED"), true),
+            DashboardAuthEnabled = yamlConfig.DashboardAuthEnabled ?? ParseBoolean(Environment.GetEnvironmentVariable("DASHBOARD_AUTH_ENABLED"), false),
+            DashboardAuthUsername = FirstNonEmpty(yamlConfig.DashboardAuthUsername, Environment.GetEnvironmentVariable("DASHBOARD_AUTH_USERNAME")) ?? string.Empty,
+            DashboardAuthPassword = FirstNonEmpty(yamlConfig.DashboardAuthPassword, Environment.GetEnvironmentVariable("DASHBOARD_AUTH_PASSWORD")) ?? string.Empty,
             DashboardRefreshSeconds = yamlConfig.DashboardRefreshSeconds ?? ParsePositiveInt(Environment.GetEnvironmentVariable("DASHBOARD_REFRESH_SECONDS"), 5),
             PingTargets = MergePingTargets(environmentPingTargets, yamlPingTargets),
             TcpTargets = MergeTcpTargets(environmentTcpTargets, yamlTcpTargets)
@@ -301,6 +645,11 @@ static class AppConfigProvider
     private static int ParsePositiveInt(string? rawValue, int defaultValue)
     {
         return int.TryParse(rawValue, out var value) && value > 0 ? value : defaultValue;
+    }
+
+    private static bool ParseBoolean(string? rawValue, bool defaultValue)
+    {
+        return bool.TryParse(rawValue, out var value) ? value : defaultValue;
     }
 
     private static string? FirstNonEmpty(params string?[] values)
@@ -408,6 +757,18 @@ static class AppConfigProvider
         {
             switch (key)
             {
+                case "enabled":
+                    config.DashboardEnabled = ParseYamlBoolean(value, key);
+                    break;
+                case "authEnabled":
+                    config.DashboardAuthEnabled = ParseYamlBoolean(value, key);
+                    break;
+                case "authUsername":
+                    config.DashboardAuthUsername = Unquote(value);
+                    break;
+                case "authPassword":
+                    config.DashboardAuthPassword = Unquote(value);
+                    break;
                 case "refreshSeconds":
                     config.DashboardRefreshSeconds = ParseYamlPositiveInt(value, key);
                     break;
@@ -626,6 +987,14 @@ static class AppConfigProvider
         throw new FormatException($"La valeur YAML '{key}' doit être un entier positif.");
     }
 
+    private static bool ParseYamlBoolean(string value, string key)
+    {
+        if (bool.TryParse(Unquote(value), out var parsedValue))
+            return parsedValue;
+
+        throw new FormatException($"La valeur YAML '{key}' doit être un booléen true/false.");
+    }
+
     private static bool TryParseHostPort(string value, out TcpTargetConfig target)
     {
         target = new TcpTargetConfig();
@@ -718,6 +1087,10 @@ sealed class YamlAppConfig
     public int? SnoozeDays { get; set; }
     public string? ScheduleCron { get; set; }
     public int? ScheduleIntervalSeconds { get; set; }
+    public bool? DashboardEnabled { get; set; }
+    public bool? DashboardAuthEnabled { get; set; }
+    public string? DashboardAuthUsername { get; set; }
+    public string? DashboardAuthPassword { get; set; }
     public int? DashboardRefreshSeconds { get; set; }
     public List<string>? PingTargets { get; set; }
     public List<TcpTargetConfig>? TcpTargets { get; set; }

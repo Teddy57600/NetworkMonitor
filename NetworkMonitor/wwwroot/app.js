@@ -29,6 +29,55 @@ function setActionStatus(message, isError = false) {
     node.classList.toggle('error', isError);
 }
 
+function updateGlobalHealth(summary) {
+    const badge = document.getElementById('globalHealthBadge');
+    badge.classList.remove('badge-health-good', 'badge-health-warning', 'badge-health-danger', 'badge-health-neutral');
+
+    if (!summary || summary.total === 0) {
+        badge.classList.add('badge-health-neutral');
+        badge.textContent = 'Santé globale — aucune cible';
+        return;
+    }
+
+    if (summary.down > 0) {
+        badge.classList.add('badge-health-danger');
+        badge.textContent = `Santé globale — critique (${summary.down} DOWN)`;
+        return;
+    }
+
+    if (summary.snoozed > 0) {
+        badge.classList.add('badge-health-warning');
+        badge.textContent = `Santé globale — attention (${summary.snoozed} snoozé${summary.snoozed > 1 ? 's' : ''})`;
+        return;
+    }
+
+    badge.classList.add('badge-health-good');
+    badge.textContent = 'Santé globale — OK';
+}
+
+function createSourceBadge(source) {
+    const badge = document.createElement('span');
+    badge.className = 'source-badge';
+
+    switch (source) {
+        case 'ENV':
+            badge.classList.add('source-env');
+            break;
+        case 'YAML':
+            badge.classList.add('source-yaml');
+            break;
+        case 'ENV + YAML':
+            badge.classList.add('source-both');
+            break;
+        default:
+            badge.classList.add('source-unknown');
+            break;
+    }
+
+    badge.textContent = source || 'Inconnue';
+    return badge;
+}
+
 function scheduleNextRefresh() {
     if (refreshTimerId) {
         clearTimeout(refreshTimerId);
@@ -85,6 +134,116 @@ async function clearSnooze(key, button) {
     }
 }
 
+async function removePingTarget(target, button) {
+    if (!window.confirm(`Supprimer la cible ping '${target}' du fichier YAML ?`)) {
+        return;
+    }
+
+    button.disabled = true;
+    setActionStatus(`Suppression de la cible ping ${target}...`);
+
+    try {
+        const payload = await postAction(`/api/actions/remove-ping?target=${encodeURIComponent(target)}`);
+        setActionStatus(payload.message);
+        await refresh();
+    }
+    catch (error) {
+        setActionStatus(`Échec de la suppression du ping : ${error.message}`, true);
+    }
+    finally {
+        button.disabled = false;
+    }
+}
+
+async function removeTcpTarget(key, button) {
+    if (!window.confirm(`Supprimer le test TCP '${key}' du fichier YAML ?`)) {
+        return;
+    }
+
+    const separatorIndex = key.lastIndexOf(':');
+    if (separatorIndex <= 0) {
+        setActionStatus(`Clé TCP invalide : ${key}`, true);
+        return;
+    }
+
+    const host = key.slice(0, separatorIndex);
+    const port = Number(key.slice(separatorIndex + 1));
+
+    button.disabled = true;
+    setActionStatus(`Suppression du test TCP ${key}...`);
+
+    try {
+        const payload = await postAction(`/api/actions/remove-tcp?host=${encodeURIComponent(host)}&port=${port}`);
+        setActionStatus(payload.message);
+        await refresh();
+    }
+    catch (error) {
+        setActionStatus(`Échec de la suppression du test TCP : ${error.message}`, true);
+    }
+    finally {
+        button.disabled = false;
+    }
+}
+
+async function addPingTarget(event) {
+    event.preventDefault();
+
+    const form = event.currentTarget;
+    const button = form.querySelector('button[type="submit"]');
+    const input = document.getElementById('pingTargetInput');
+    const target = input.value.trim();
+    if (!target) {
+        setActionStatus('La cible ping est obligatoire.', true);
+        return;
+    }
+
+    button.disabled = true;
+    setActionStatus(`Ajout de la cible ping ${target}...`);
+
+    try {
+        const payload = await postAction(`/api/actions/add-ping?target=${encodeURIComponent(target)}`);
+        setActionStatus(payload.message);
+        form.reset();
+        await refresh();
+    }
+    catch (error) {
+        setActionStatus(`Échec de l'ajout du ping : ${error.message}`, true);
+    }
+    finally {
+        button.disabled = false;
+    }
+}
+
+async function addTcpTarget(event) {
+    event.preventDefault();
+
+    const form = event.currentTarget;
+    const button = form.querySelector('button[type="submit"]');
+    const host = document.getElementById('tcpHostInput').value.trim();
+    const port = Number(document.getElementById('tcpPortInput').value);
+
+    if (!host || !Number.isInteger(port) || port <= 0) {
+        setActionStatus('L’hôte TCP et un port valide sont obligatoires.', true);
+        return;
+    }
+
+    button.disabled = true;
+    setActionStatus(`Ajout du test TCP ${host}:${port}...`);
+
+    try {
+        const payload = await postAction(`/api/actions/add-tcp?host=${encodeURIComponent(host)}&port=${port}`);
+        setActionStatus(payload.message);
+        form.reset();
+        await refresh();
+    }
+    catch (error) {
+        setActionStatus(`Échec de l'ajout du test TCP : ${error.message}`, true);
+    }
+    finally {
+        button.disabled = false;
+    }
+}
+
 function renderMonitorList(containerId, monitors) {
     const container = document.getElementById(containerId);
     container.innerHTML = '';
@@ -113,6 +272,23 @@ function renderMonitorList(containerId, monitors) {
         }
 
         const actions = node.querySelector('.monitor-actions');
+
+        if (monitor.source !== 'ENV') {
+            const removeButton = document.createElement('button');
+            removeButton.type = 'button';
+            removeButton.className = 'action-button danger';
+            removeButton.textContent = monitor.type === 'TCP' ? 'Supprimer le test' : 'Supprimer la cible';
+            removeButton.addEventListener('click', () => {
+                if (monitor.type === 'TCP') {
+                    removeTcpTarget(monitor.key, removeButton);
+                    return;
+                }
+
+                removePingTarget(monitor.key, removeButton);
+            });
+            actions.appendChild(removeButton);
+        }
+
         if (monitor.snoozeUntil) {
             const clearSnoozeButton = document.createElement('button');
             clearSnoozeButton.type = 'button';
@@ -124,6 +300,7 @@ function renderMonitorList(containerId, monitors) {
 
         const meta = node.querySelector('.monitor-meta');
         const rows = [
+            ['Source', createSourceBadge(monitor.source)],
             ['Dernier contrôle', formatDate(monitor.lastCheckAt)],
             ['Dernier succès', formatDate(monitor.lastSuccessAt)],
             ['Dernier échec', formatDate(monitor.lastFailureAt)],
@@ -139,7 +316,12 @@ function renderMonitorList(containerId, monitors) {
             const dt = document.createElement('dt');
             const dd = document.createElement('dd');
             dt.textContent = label;
-            dd.textContent = value;
+            if (value instanceof Node) {
+                dd.appendChild(value);
+            }
+            else {
+                dd.textContent = value;
+            }
             wrapper.append(dt, dd);
             meta.appendChild(wrapper);
         });
@@ -158,6 +340,7 @@ async function refresh() {
         const data = await response.json();
         currentRefreshIntervalMs = Math.max(1, Number(data.refreshIntervalSeconds ?? 5)) * 1000;
 
+        updateGlobalHealth(data.summary);
         setText('subtitle', `${data.summary.total} moniteur(s) • ${data.summary.up} UP • ${data.summary.down} DOWN`);
         setText('generatedAt', `MàJ ${formatDate(data.generatedAt)}`);
         setText('timeZone', data.timeZone);
@@ -184,4 +367,6 @@ async function refresh() {
 }
 
 document.getElementById('checkNowButton').addEventListener('click', requestImmediateCheck);
+document.getElementById('pingTargetForm').addEventListener('submit', addPingTarget);
+document.getElementById('tcpTargetForm').addEventListener('submit', addTcpTarget);
 refresh();

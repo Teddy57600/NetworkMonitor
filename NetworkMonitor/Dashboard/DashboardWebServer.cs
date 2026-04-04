@@ -18,6 +18,7 @@ static class DashboardWebServer
             builder.WebHost.UseUrls("http://0.0.0.0:8080");
 
         var app = builder.Build();
+        var config = AppConfigProvider.Current;
 
         var webRoot = Path.Combine(AppContext.BaseDirectory, "wwwroot");
         if (Directory.Exists(webRoot))
@@ -30,6 +31,89 @@ static class DashboardWebServer
             app.UseStaticFiles(new StaticFileOptions
             {
                 FileProvider = new PhysicalFileProvider(webRoot)
+            });
+        }
+
+        app.MapGet("/login", async context =>
+        {
+            if (!config.DashboardAuthEnabled || DashboardSessionAuth.IsAuthenticated(context.Request))
+            {
+                context.Response.Redirect("/");
+                return;
+            }
+
+            var loginPath = Path.Combine(webRoot, "login.html");
+            if (!File.Exists(loginPath))
+            {
+                context.Response.StatusCode = StatusCodes.Status404NotFound;
+                return;
+            }
+
+            context.Response.ContentType = "text/html; charset=utf-8";
+            await context.Response.SendFileAsync(loginPath, context.RequestAborted);
+        });
+
+        app.MapPost("/login", async context =>
+        {
+            var currentConfig = AppConfigProvider.Current;
+            if (!currentConfig.DashboardAuthEnabled)
+            {
+                context.Response.Redirect("/");
+                return;
+            }
+
+            var form = await context.Request.ReadFormAsync(context.RequestAborted);
+            var username = form["username"].ToString();
+            var password = form["password"].ToString();
+
+            if (!DashboardSessionAuth.ValidateCredentials(currentConfig, username, password))
+            {
+                context.Response.Redirect("/login?error=1");
+                return;
+            }
+
+            DashboardSessionAuth.SignIn(context.Response);
+            context.Response.Redirect("/");
+        });
+
+        app.MapPost("/logout", context =>
+        {
+            DashboardSessionAuth.SignOut(context.Request, context.Response);
+            context.Response.Redirect("/login");
+            return Task.CompletedTask;
+        });
+
+        if (config.DashboardAuthEnabled)
+        {
+            app.Use(async (context, next) =>
+            {
+                if (context.Request.Path.StartsWithSegments("/login", StringComparison.OrdinalIgnoreCase))
+                {
+                    await next(context);
+                    return;
+                }
+
+                if (DashboardSessionAuth.IsAuthenticated(context.Request))
+                {
+                    await next(context);
+                    return;
+                }
+
+                if (context.Request.Path.StartsWithSegments("/api", StringComparison.OrdinalIgnoreCase))
+                {
+                    var payload = JsonSerializer.Serialize(new DashboardActionResponse
+                    {
+                        Success = false,
+                        Message = "Authentification requise."
+                    }, typeof(DashboardActionResponse), DashboardJsonContext.Default);
+
+                    context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+                    context.Response.ContentType = "application/json";
+                    await context.Response.WriteAsync(payload, context.RequestAborted);
+                    return;
+                }
+
+                context.Response.Redirect("/login");
             });
         }
 
@@ -81,10 +165,80 @@ static class DashboardWebServer
             return Results.Text(json, "application/json");
         });
 
+        app.MapPost("/api/actions/add-ping", (string target) =>
+        {
+            var result = AppConfigProvider.AddPingTarget(target);
+            var response = new DashboardActionResponse
+            {
+                Success = result.Success,
+                Message = result.Message
+            };
+
+            var json = JsonSerializer.Serialize(response, typeof(DashboardActionResponse), DashboardJsonContext.Default);
+            return Results.Text(
+                json,
+                "application/json",
+                statusCode: result.Success ? StatusCodes.Status200OK : StatusCodes.Status400BadRequest);
+        });
+
+        app.MapPost("/api/actions/remove-ping", (string target) =>
+        {
+            var result = AppConfigProvider.RemovePingTarget(target);
+            var response = new DashboardActionResponse
+            {
+                Success = result.Success,
+                Message = result.Message
+            };
+
+            var json = JsonSerializer.Serialize(response, typeof(DashboardActionResponse), DashboardJsonContext.Default);
+            return Results.Text(
+                json,
+                "application/json",
+                statusCode: result.Success ? StatusCodes.Status200OK : StatusCodes.Status400BadRequest);
+        });
+
+        app.MapPost("/api/actions/add-tcp", (string host, int port) =>
+        {
+            var result = AppConfigProvider.AddTcpTarget(host, port);
+            var response = new DashboardActionResponse
+            {
+                Success = result.Success,
+                Message = result.Message
+            };
+
+            var json = JsonSerializer.Serialize(response, typeof(DashboardActionResponse), DashboardJsonContext.Default);
+            return Results.Text(
+                json,
+                "application/json",
+                statusCode: result.Success ? StatusCodes.Status200OK : StatusCodes.Status400BadRequest);
+        });
+
+        app.MapPost("/api/actions/remove-tcp", (string host, int port) =>
+        {
+            var result = AppConfigProvider.RemoveTcpTarget(host, port);
+            var response = new DashboardActionResponse
+            {
+                Success = result.Success,
+                Message = result.Message
+            };
+
+            var json = JsonSerializer.Serialize(response, typeof(DashboardActionResponse), DashboardJsonContext.Default);
+            return Results.Text(
+                json,
+                "application/json",
+                statusCode: result.Success ? StatusCodes.Status200OK : StatusCodes.Status400BadRequest);
+        });
+
         app.MapGet("/api/health", () => Results.Text("{\"status\":\"ok\"}", "application/json"));
 
         app.MapFallback(async context =>
         {
+            if (config.DashboardAuthEnabled && !DashboardSessionAuth.IsAuthenticated(context.Request))
+            {
+                context.Response.Redirect("/login");
+                return;
+            }
+
             var indexPath = Path.Combine(webRoot, "index.html");
             if (!File.Exists(indexPath))
             {

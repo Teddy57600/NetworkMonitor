@@ -9,6 +9,10 @@ schedule:
   # intervalSeconds: 10
 
 dashboard:
+  enabled: true
+  authEnabled: false
+  authUsername: "admin"
+  authPassword: "change-me"
   refreshSeconds: 5
 
 pushover:

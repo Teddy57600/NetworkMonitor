@@ -85,6 +85,8 @@ Le projet cible **.NET 11** et active la **publication Native AOT**.
 - endpoint de santé `GET /api/health`
 - action web pour demander un **check immédiat**
 - action web pour **supprimer un snooze** sur un moniteur
+- formulaires web pour **ajouter une cible Ping** ou **un test TCP**
+- boutons web pour **supprimer une cible Ping** ou **un test TCP**
 - rafraîchissement automatique configurable
 
 ---
@@ -196,10 +198,14 @@ Résultat effectif :
 | `PUSHOVER_STARTUP_SOUND` | Son de la notification de démarrage | `cosmic` | `cosmic` |
 | `PUSHOVER_SHUTDOWN_SOUND` | Son de la notification d'arrêt | `falling` | `falling` |
 | `SNOOZE_DAYS` | Nombre de jours de snooze après acquittement | `3` | `1` |
+| `DASHBOARD_ENABLED` | Active ou désactive le serveur web du dashboard | `true` | `true` |
+| `DASHBOARD_AUTH_ENABLED` | Active la page de connexion du dashboard | `true` | `false` |
+| `DASHBOARD_AUTH_USERNAME` | Nom d'utilisateur du dashboard | `admin` | vide |
+| `DASHBOARD_AUTH_PASSWORD` | Mot de passe du dashboard | `change-me` | vide |
 | `DASHBOARD_REFRESH_SECONDS` | Intervalle de rafraîchissement automatique de l'interface web | `5` | `5` |
 | `DATA_DIR` | Répertoire de persistance (`state.json`, logs, config YAML par défaut) | `/data` | `.` |
 | `APP_VERSION` | Version affichée dans les logs/notifications | `1.5.0` | `inconnue` |
-| `CONFIG_YAML_PATH` | Chemin explicite du fichier YAML | `/data/config.yaml` | `DATA_DIR/config.yaml` |
+| `CONFIG_YAML_PATH` | Chemin explicite du fichier YAML | `/config/config.yaml` | `DATA_DIR/config.yaml` |
 | `TZ` | Fuseau horaire du conteneur | `Europe/Paris` | `Europe/Paris` dans l'image Docker |
 | `ASPNETCORE_URLS` | URLs d'écoute du serveur web embarqué | `http://0.0.0.0:8080` | `http://0.0.0.0:8080` |
 
@@ -267,6 +273,8 @@ Les changements suivants sont pris en compte :
 - en production, le plus simple est donc de modifier `config.yaml` côté hôte, puis de laisser l'application détecter automatiquement le changement
 - pour des mises à jour plus fiables, privilégier un **remplacement atomique** du fichier (écriture dans un fichier temporaire puis renommage)
 - si votre environnement de stockage remonte mal les événements fichiers, le repli périodique continue malgré tout d'assurer la prise en compte des changements
+- si vous souhaitez **ajouter des cibles depuis l'interface web**, le montage YAML doit être **inscriptible** (`rw`)
+- la suppression depuis l'interface web retire uniquement les cibles présentes dans le **YAML** ; une cible fournie par variable d'environnement reste monitorée
 
 #### Exemple de mise à jour atomique en PowerShell
 
@@ -329,6 +337,10 @@ schedule:
   # intervalSeconds: 10
 
 dashboard:
+  enabled: true
+  authEnabled: false
+  authUsername: "admin"
+  authPassword: "change-me"
   refreshSeconds: 5
 
 pushover:
@@ -355,6 +367,10 @@ monitoring:
 | `snoozeDays` | Durée du snooze après acquittement |
 | `schedule.cron` | Planification CRON |
 | `schedule.intervalSeconds` | Planification par intervalle |
+| `dashboard.enabled` | Active ou désactive le serveur web du dashboard |
+| `dashboard.authEnabled` | Active la page de connexion du dashboard |
+| `dashboard.authUsername` | Nom d'utilisateur du dashboard |
+| `dashboard.authPassword` | Mot de passe du dashboard |
 | `dashboard.refreshSeconds` | Intervalle de rafraîchissement de l'interface web |
 | `pushover.token` | Token Pushover |
 | `pushover.user` | Utilisateur/groupe Pushover |
@@ -529,6 +545,9 @@ docker run -d \
   -e TCP_TARGETS="google.com:443,192.168.1.10:22" \
   -e SCHEDULE_CRON="*/3 * * * *" \
   -e DASHBOARD_REFRESH_SECONDS="5" \
+  -e DASHBOARD_AUTH_ENABLED="true" \
+  -e DASHBOARD_AUTH_USERNAME="admin" \
+  -e DASHBOARD_AUTH_PASSWORD="change-me" \
   -e PUSHOVER_TOKEN="your-token" \
   -e PUSHOVER_USER="your-user" \
   -e PUSHOVER_STARTUP_SOUND="cosmic" \
@@ -547,10 +566,12 @@ docker run -d \
   -p 8080:8080 \
   -e DATA_DIR="/data" \
   -e CONFIG_YAML_PATH="/config/config.yaml" \
-  -v ${PWD}/config.yaml:/config/config.yaml:ro \
+  -v ${PWD}/config.yaml:/config/config.yaml \
   -v networkmonitor-data:/data \
   networkmonitor
 ```
+
+> Si vous voulez empêcher les modifications du YAML depuis l'interface web, remplacez ce montage par `:ro`.
 
 ### Docker Compose
 
@@ -573,10 +594,13 @@ services:
     environment:
       DATA_DIR: /data
       CONFIG_YAML_PATH: /config/config.yaml
+      DASHBOARD_AUTH_ENABLED: "true"
+      DASHBOARD_AUTH_USERNAME: "admin"
+      DASHBOARD_AUTH_PASSWORD: "change-me"
     ports:
       - 8080:8080
     volumes:
-      - ./config.yaml:/config/config.yaml:ro
+      - ./config.yaml:/config/config.yaml
       - networkmonitor-data:/data
 
 volumes:
@@ -599,6 +623,10 @@ Endpoints utiles :
 - `GET /api/health` : endpoint de santé simple
 - `POST /api/actions/check-now` : demande un cycle de vérification immédiat
 - `POST /api/actions/clear-snooze?key=...` : supprime le snooze d'un moniteur
+- `POST /api/actions/add-ping?target=...` : ajoute une cible Ping au YAML
+- `POST /api/actions/add-tcp?host=...&port=...` : ajoute un test TCP au YAML
+- `POST /api/actions/remove-ping?target=...` : supprime une cible Ping du YAML
+- `POST /api/actions/remove-tcp?host=...&port=...` : supprime un test TCP du YAML
 
 Le dashboard affiche notamment :
 
@@ -608,6 +636,91 @@ Le dashboard affiche notamment :
 - la durée du dernier test
 - l'état du circuit breaker
 - la fin éventuelle du snooze
+- des formulaires pour ajouter rapidement des cibles Ping et TCP
+- des boutons pour supprimer rapidement des cibles gérées par le YAML
+
+### Sécurité du dashboard
+
+Une authentification simple via **page de connexion + cookie de session** peut être activée via :
+
+- `dashboard.authEnabled`, `dashboard.authUsername`, `dashboard.authPassword` dans le YAML
+- ou `DASHBOARD_AUTH_ENABLED`, `DASHBOARD_AUTH_USERNAME`, `DASHBOARD_AUTH_PASSWORD` via l'environnement
+
+Exemple YAML :
+
+```yaml
+dashboard:
+  enabled: true
+  authEnabled: true
+  authUsername: "admin"
+  authPassword: "change-me"
+  refreshSeconds: 5
+```
+
+Quand elle est activée :
+
+- l'utilisateur arrive d'abord sur une page de connexion dédiée
+- après authentification, une session web est conservée via cookie
+- les routes du dashboard et les API associées sont protégées
+
+> Recommandation : si le dashboard est exposé hors du réseau local, placez-le derrière **HTTPS** ou un **reverse proxy** (Nginx, Traefik, Caddy). Même avec une page de connexion, un trafic HTTP non chiffré reste à éviter.
+
+#### Exemple Traefik
+
+Exemple `docker-compose` minimal avec Traefik en frontal TLS :
+
+```yaml
+services:
+  traefik:
+    image: traefik:v3.1
+    command:
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+      - --entrypoints.web.address=:80
+      - --entrypoints.websecure.address=:443
+      - --certificatesresolvers.letsencrypt.acme.tlschallenge=true
+      - --certificatesresolvers.letsencrypt.acme.email=admin@example.com
+      - --certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - traefik-letsencrypt:/letsencrypt
+
+  networkmonitor:
+    build:
+      context: .
+      dockerfile: NetworkMonitor/Dockerfile
+    restart: unless-stopped
+    environment:
+      DATA_DIR: /data
+      CONFIG_YAML_PATH: /config/config.yaml
+      DASHBOARD_AUTH_ENABLED: "true"
+      DASHBOARD_AUTH_USERNAME: "admin"
+      DASHBOARD_AUTH_PASSWORD: "change-me"
+    volumes:
+      - ./config.yaml:/config/config.yaml
+      - networkmonitor-data:/data
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.networkmonitor.rule=Host(`monitor.example.com`)
+      - traefik.http.routers.networkmonitor.entrypoints=websecure
+      - traefik.http.routers.networkmonitor.tls=true
+      - traefik.http.routers.networkmonitor.tls.certresolver=letsencrypt
+      - traefik.http.services.networkmonitor.loadbalancer.server.port=8080
+
+volumes:
+  networkmonitor-data:
+  traefik-letsencrypt:
+```
+
+Dans cet exemple :
+
+- Traefik publie le dashboard en **HTTPS** sur `monitor.example.com`
+- l'application continue d'écouter en interne sur le port `8080`
+- la page de connexion applicative peut rester active en complément
+- il n'est plus nécessaire d'exposer directement `8080` sur l'hôte
 
 ---
 

@@ -1,4 +1,5 @@
 ﻿using System.Runtime.InteropServices;
+using Microsoft.AspNetCore.Builder;
 using Microsoft.Extensions.Logging;
 
 namespace NetworkMonitor;
@@ -30,7 +31,9 @@ internal class Program
         var tcpMonitors = CreateTcpMonitors(config.TcpTargets, loggerFactory);
         var schedule = BuildSchedule(config);
         var dashboardLogger = loggerFactory.CreateLogger("DashboardWeb");
-        var dashboardApp = await DashboardWebServer.StartAsync(
+        var dashboardApp = await EnsureDashboardStateAsync(
+            null,
+            config.DashboardEnabled,
             () => BuildDashboardSnapshot(startedAt, monitorCollectionsLock, monitors, tcpMonitors),
             manualCheckTrigger,
             dashboardLogger,
@@ -73,6 +76,13 @@ internal class Program
                         SyncTcpMonitors(tcpMonitors, config.TcpTargets, loggerFactory, logger);
                     }
                     schedule = BuildSchedule(config);
+                    dashboardApp = await EnsureDashboardStateAsync(
+                        dashboardApp,
+                        config.DashboardEnabled,
+                        () => BuildDashboardSnapshot(startedAt, monitorCollectionsLock, monitors, tcpMonitors),
+                        manualCheckTrigger,
+                        dashboardLogger,
+                        cts.Token);
                     configVersion = AppConfigProvider.Version;
                     LogActiveConfiguration(logger, config);
                 }
@@ -109,7 +119,11 @@ internal class Program
         }
         finally
         {
-            await dashboardApp.StopAsync(CancellationToken.None);
+            if (dashboardApp is not null)
+            {
+                await dashboardApp.StopAsync(CancellationToken.None);
+                await dashboardApp.DisposeAsync();
+            }
             AppConfigProvider.RefreshIfChanged(logger);
             config = AppConfigProvider.Current;
             version = config.AppVersion;
@@ -170,6 +184,32 @@ internal class Program
             PingMonitors = pingSnapshots,
             TcpMonitors = tcpSnapshots
         };
+    }
+
+    private static async Task<WebApplication?> EnsureDashboardStateAsync(
+        WebApplication? dashboardApp,
+        bool dashboardEnabled,
+        Func<DashboardSnapshot> snapshotFactory,
+        ManualCheckTrigger manualCheckTrigger,
+        ILogger logger,
+        CancellationToken ct)
+    {
+        if (dashboardEnabled)
+        {
+            if (dashboardApp is not null)
+                return dashboardApp;
+
+            logger.LogInformation("Activation du tableau de bord web.");
+            return await DashboardWebServer.StartAsync(snapshotFactory, manualCheckTrigger, logger, ct);
+        }
+
+        if (dashboardApp is null)
+            return null;
+
+        logger.LogInformation("Désactivation du tableau de bord web.");
+        await dashboardApp.StopAsync(CancellationToken.None);
+        await dashboardApp.DisposeAsync();
+        return null;
     }
 
     private static Dictionary<string, MonitorState> CreatePingMonitors(IReadOnlyList<string> ips, ILoggerFactory loggerFactory)
@@ -282,8 +322,9 @@ internal class Program
             logger.LogWarning("Aucun endpoint host:port à monitorer n'est configuré.");
 
         logger.LogInformation(
-            "Configuration active — YAML: {YamlPath} — Ping: {PingCount} — TCP: {TcpCount} — Schedule: {Schedule}",
+            "Configuration active — YAML: {YamlPath} — Dashboard: {DashboardEnabled} — Ping: {PingCount} — TCP: {TcpCount} — Schedule: {Schedule}",
             AppConfigProvider.ConfigPath,
+            config.DashboardEnabled ? "activé" : "désactivé",
             config.PingTargets.Count,
             config.TcpTargets.Count,
             BuildSchedule(config).Description);

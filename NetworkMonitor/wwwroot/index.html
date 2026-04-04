@@ -15,10 +15,14 @@
                 <p id="subtitle" class="subtitle">Chargement...</p>
                 <div class="hero-actions">
                     <button id="checkNowButton" type="button" class="action-button primary">Lancer un check immédiat</button>
+                    <form id="logoutForm" method="post" action="/logout">
+                        <button id="logoutButton" type="submit" class="action-button ghost">Se déconnecter</button>
+                    </form>
                     <span id="actionStatus" class="action-status">Aucune action en cours.</span>
                 </div>
             </div>
             <div class="hero-badges">
+                <span id="globalHealthBadge" class="badge badge-health badge-health-neutral">Santé globale — --</span>
                 <span id="generatedAt" class="badge">--</span>
                 <span id="timeZone" class="badge badge-muted">--</span>
             </div>
@@ -43,6 +47,35 @@
             </article>
         </section>
 
+        <section class="panel legend-panel">
+            <div class="panel-header">
+                <div>
+                    <h2>Légende</h2>
+                    <p>Repères visuels des statuts et des sources de configuration</p>
+                </div>
+            </div>
+
+            <div class="legend-grid">
+                <div class="legend-group">
+                    <span class="legend-title">Statuts</span>
+                    <div class="legend-items">
+                        <span class="monitor-state up">UP</span>
+                        <span class="monitor-state down">DOWN</span>
+                        <span class="monitor-state up snoozed">UP • snooze</span>
+                    </div>
+                </div>
+
+                <div class="legend-group">
+                    <span class="legend-title">Sources</span>
+                    <div class="legend-items">
+                        <span class="source-badge source-env">ENV</span>
+                        <span class="source-badge source-yaml">YAML</span>
+                        <span class="source-badge source-both">ENV + YAML</span>
+                    </div>
+                </div>
+            </div>
+        </section>
+
         <section class="panel-grid">
             <article class="panel">
                 <div class="panel-title">Informations générales</div>
@@ -54,6 +87,30 @@
                     <div><dt>Démarré</dt><dd id="startedAt">--</dd></div>
                     <div><dt>Refresh UI</dt><dd id="refreshInterval">--</dd></div>
                 </dl>
+            </article>
+            <article class="panel">
+                <div class="panel-title">Ajouter des cibles</div>
+                <p class="panel-description">Les cibles ajoutées ici sont écrites dans le fichier YAML surveillé, pas dans les variables d'environnement.</p>
+
+                <form id="pingTargetForm" class="inline-form">
+                    <div class="field-group">
+                        <label for="pingTargetInput">Hôte / IP à pinger</label>
+                        <input id="pingTargetInput" name="target" type="text" placeholder="ex: 8.8.8.8 ou routeur.local" required />
+                    </div>
+                    <button type="submit" class="action-button primary">Ajouter un ping</button>
+                </form>
+
+                <form id="tcpTargetForm" class="inline-form">
+                    <div class="field-group grow">
+                        <label for="tcpHostInput">Hôte TCP</label>
+                        <input id="tcpHostInput" name="host" type="text" placeholder="ex: smtp.example.com" required />
+                    </div>
+                    <div class="field-group small">
+                        <label for="tcpPortInput">Port</label>
+                        <input id="tcpPortInput" name="port" type="number" min="1" max="65535" placeholder="443" required />
+                    </div>
+                    <button type="submit" class="action-button primary">Ajouter un test TCP</button>
+                </form>
             </article>
         </section>
 

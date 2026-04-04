@@ -106,6 +106,7 @@ class TcpPortMonitorState
             Key = key,
             Type = "TCP",
             DisplayName = key,
+            Source = AppConfigProvider.GetTcpTargetSource(_host, _port),
             Status = _isDown ? "DOWN" : "UP",
             IsDown = _isDown,
             FailCount = _failCount,
