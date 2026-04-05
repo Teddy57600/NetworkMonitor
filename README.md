@@ -603,11 +603,42 @@ services:
       - ./config.yaml:/config/config.yaml
       - networkmonitor-data:/data
 
+  watchtower:
+    image: containrrr/watchtower:latest
+    container_name: networkmonitor-watchtower
+    restart: unless-stopped
+    command: --interval 3600 --cleanup --label-enable
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+
 volumes:
   networkmonitor-data:
 ```
 
 > Sous Docker, l'arrêt via `docker stop` envoie un `SIGTERM`. L'application intercepte ce signal pour effectuer un arrêt propre et envoyer la notification de fin.
+
+### Auto-update en production avec Watchtower
+
+Pour un usage production simple avec `docker-compose.yaml`, le plus fiable est d'utiliser un conteneur **Watchtower** qui surveille les nouvelles versions d'image et redémarre le service automatiquement.
+
+Principe :
+
+- Watchtower vérifie périodiquement si une nouvelle image est disponible dans le registre
+- si une nouvelle version est trouvée, elle est téléchargée
+- le conteneur applicatif est recréé puis redémarré automatiquement
+
+Pré-requis importants :
+
+- utiliser une **image publiée dans un registre** (`ghcr.io/...`, Docker Hub, etc.)
+- éviter un déploiement basé uniquement sur `build: .` si vous voulez un vrai auto-update depuis un registre
+- conserver `/data` en volume persistant
+
+Variables d'exemple fournies dans `.env.example` :
+
+- `NETWORKMONITOR_WATCHTOWER_CONTAINER_NAME`
+- `NETWORKMONITOR_WATCHTOWER_INTERVAL_SECONDS`
+
+> Remarque : l'auto-update entraînera généralement un **court redémarrage** du service. Ce n'est pas un mécanisme de zero-downtime.
 
 ### Tableau de bord web et API
 

@@ -17,5 +17,13 @@ services:
       - ${NETWORKMONITOR_YAML_SOURCE:-./config.yaml}:${NETWORKMONITOR_CONFIG_PATH:-/config/config.yaml}:${NETWORKMONITOR_YAML_MOUNT_MODE:-rw}
       - ${NETWORKMONITOR_DATA_VOLUME:-networkmonitor-data}:${NETWORKMONITOR_DATA_DIR:-/data}
 
+  watchtower:
+    image: containrrr/watchtower:latest
+    container_name: ${NETWORKMONITOR_WATCHTOWER_CONTAINER_NAME:-networkmonitor-watchtower}
+    restart: unless-stopped
+    command: --interval ${NETWORKMONITOR_WATCHTOWER_INTERVAL_SECONDS:-3600} --cleanup --label-enable
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+
 volumes:
   ${NETWORKMONITOR_DATA_VOLUME:-networkmonitor-data}:
