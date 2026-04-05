@@ -145,6 +145,50 @@ static class DashboardWebServer
             return Results.Text(json, "application/json");
         });
 
+        app.MapPost("/api/actions/snooze", (string key, int? durationMinutes) =>
+        {
+            if (string.IsNullOrWhiteSpace(key))
+            {
+                var invalid = new DashboardActionResponse
+                {
+                    Success = false,
+                    Message = "La clé du moniteur est obligatoire."
+                };
+
+                var invalidJson = JsonSerializer.Serialize(invalid, typeof(DashboardActionResponse), DashboardJsonContext.Default);
+                return Results.Text(invalidJson, "application/json", statusCode: StatusCodes.Status400BadRequest);
+            }
+
+            var config = AppConfigProvider.Current;
+            if (durationMinutes is <= 0 or > 525600)
+            {
+                var invalidDuration = new DashboardActionResponse
+                {
+                    Success = false,
+                    Message = "La durée du snooze doit être comprise entre 1 minute et 365 jours."
+                };
+
+                var invalidDurationJson = JsonSerializer.Serialize(invalidDuration, typeof(DashboardActionResponse), DashboardJsonContext.Default);
+                return Results.Text(invalidDurationJson, "application/json", statusCode: StatusCodes.Status400BadRequest);
+            }
+
+            var duration = durationMinutes.HasValue
+                ? TimeSpan.FromMinutes(durationMinutes.Value)
+                : TimeSpan.FromDays(config.SnoozeDays);
+
+            var snoozeUntil = PushoverSnooze.SetSnooze(key, duration);
+            logger.LogInformation("🔕 Snooze manuel activé pour {Key} pendant {Duration} jusqu'au {Until:dd/MM/yyyy HH:mm} UTC", key, duration, snoozeUntil);
+
+            var response = new DashboardActionResponse
+            {
+                Success = true,
+                Message = $"Le moniteur '{key}' est snoozé jusqu'au {snoozeUntil:dd/MM/yyyy HH:mm} UTC."
+            };
+
+            var json = JsonSerializer.Serialize(response, typeof(DashboardActionResponse), DashboardJsonContext.Default);
+            return Results.Text(json, "application/json");
+        });
+
         app.MapPost("/api/actions/clear-snooze", (string key) =>
         {
             if (string.IsNullOrWhiteSpace(key))

@@ -170,6 +170,7 @@ internal class Program
             StartedAt = startedAt,
             Version = config.AppVersion,
             Schedule = BuildSchedule(config).Description,
+            DefaultSnoozeDays = config.SnoozeDays,
             ConfigPath = AppConfigProvider.ConfigPath,
             ConfigVersion = AppConfigProvider.Version,
             TimeZone = TimeZoneInfo.Local.Id,

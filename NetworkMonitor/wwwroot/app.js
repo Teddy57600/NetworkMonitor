@@ -2,6 +2,49 @@ const refreshIntervalMs = 5000;
 
 let refreshTimerId = null;
 let currentRefreshIntervalMs = 5000;
+let defaultSnoozeDays = 1;
+
+function formatSnoozeDurationLabel(totalMinutes) {
+    if (totalMinutes % 1440 === 0) {
+        const days = totalMinutes / 1440;
+        return `${days} jour${days > 1 ? 's' : ''}`;
+    }
+
+    if (totalMinutes % 60 === 0) {
+        const hours = totalMinutes / 60;
+        return `${hours} heure${hours > 1 ? 's' : ''}`;
+    }
+
+    return `${totalMinutes} minute${totalMinutes > 1 ? 's' : ''}`;
+}
+
+function getDefaultSnoozeDurationMinutes() {
+    return Math.max(1, defaultSnoozeDays) * 24 * 60;
+}
+
+function syncSnoozeDurationSelector() {
+    const select = document.getElementById('snoozeDurationSelect');
+    const hint = document.getElementById('snoozeDurationHint');
+    const defaultLabel = formatSnoozeDurationLabel(getDefaultSnoozeDurationMinutes());
+    const defaultOption = select.querySelector('option[value=""]');
+    defaultOption.textContent = `Valeur par défaut (${defaultLabel})`;
+    hint.textContent = `Cette durée sera utilisée par le bouton Snoozer. Valeur par défaut actuelle : ${defaultLabel}.`;
+}
+
+function getSelectedSnoozeDuration() {
+    const select = document.getElementById('snoozeDurationSelect');
+    if (!select.value) {
+        return {
+            minutes: null,
+            label: formatSnoozeDurationLabel(getDefaultSnoozeDurationMinutes())
+        };
+    }
+
+    return {
+        minutes: Math.max(1, Number(select.value)),
+        label: select.options[select.selectedIndex]?.textContent ?? formatSnoozeDurationLabel(Number(select.value))
+    };
+}
 
 function formatDate(value) {
     if (!value) {
@@ -111,6 +154,31 @@ async function requestImmediateCheck() {
     }
     catch (error) {
         setActionStatus(`Échec de la demande : ${error.message}`, true);
+    }
+    finally {
+        button.disabled = false;
+    }
+}
+
+async function snoozeMonitor(key, button) {
+    const snoozeDuration = getSelectedSnoozeDuration();
+    if (!window.confirm(`Snoozer '${key}' pendant ${snoozeDuration.label} ?`)) {
+        return;
+    }
+
+    button.disabled = true;
+    setActionStatus(`Activation du snooze pour ${key} (${snoozeDuration.label})...`);
+
+    try {
+        const durationQuery = snoozeDuration.minutes === null
+            ? ''
+            : `&durationMinutes=${encodeURIComponent(snoozeDuration.minutes)}`;
+        const payload = await postAction(`/api/actions/snooze?key=${encodeURIComponent(key)}${durationQuery}`);
+        setActionStatus(payload.message);
+        await refresh();
+    }
+    catch (error) {
+        setActionStatus(`Échec du snooze : ${error.message}`, true);
     }
     finally {
         button.disabled = false;
@@ -273,6 +341,15 @@ function renderMonitorList(containerId, monitors) {
 
         const actions = node.querySelector('.monitor-actions');
 
+        if (!monitor.snoozeUntil) {
+            const snoozeButton = document.createElement('button');
+            snoozeButton.type = 'button';
+            snoozeButton.className = 'action-button secondary';
+            snoozeButton.textContent = 'Snoozer';
+            snoozeButton.addEventListener('click', () => snoozeMonitor(monitor.key, snoozeButton));
+            actions.appendChild(snoozeButton);
+        }
+
         if (monitor.source !== 'ENV') {
             const removeButton = document.createElement('button');
             removeButton.type = 'button';
@@ -292,7 +369,7 @@ function renderMonitorList(containerId, monitors) {
         if (monitor.snoozeUntil) {
             const clearSnoozeButton = document.createElement('button');
             clearSnoozeButton.type = 'button';
-            clearSnoozeButton.className = 'action-button secondary';
+            clearSnoozeButton.className = 'action-button ghost';
             clearSnoozeButton.textContent = 'Supprimer le snooze';
             clearSnoozeButton.addEventListener('click', () => clearSnooze(monitor.key, clearSnoozeButton));
             actions.appendChild(clearSnoozeButton);
@@ -339,6 +416,8 @@ async function refresh() {
 
         const data = await response.json();
         currentRefreshIntervalMs = Math.max(1, Number(data.refreshIntervalSeconds ?? 5)) * 1000;
+        defaultSnoozeDays = Math.max(1, Number(data.defaultSnoozeDays ?? 1));
+        syncSnoozeDurationSelector();
 
         updateGlobalHealth(data.summary);
         setText('subtitle', `${data.summary.total} moniteur(s) • ${data.summary.up} UP • ${data.summary.down} DOWN`);

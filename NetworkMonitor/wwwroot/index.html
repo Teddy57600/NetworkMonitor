@@ -87,6 +87,19 @@
                     <div><dt>Démarré</dt><dd id="startedAt">--</dd></div>
                     <div><dt>Refresh UI</dt><dd id="refreshInterval">--</dd></div>
                 </dl>
+                <div class="field-group compact">
+                    <label for="snoozeDurationSelect">Durée de snooze</label>
+                    <select id="snoozeDurationSelect" name="snoozeDuration">
+                        <option value="">Valeur par défaut</option>
+                        <option value="60">1 heure</option>
+                        <option value="360">6 heures</option>
+                        <option value="720">12 heures</option>
+                        <option value="1440">24 heures</option>
+                        <option value="4320">3 jours</option>
+                        <option value="10080">7 jours</option>
+                    </select>
+                    <span id="snoozeDurationHint" class="field-hint">Cette durée sera utilisée par le bouton Snoozer.</span>
+                </div>
             </article>
             <article class="panel">
                 <div class="panel-title">Ajouter des cibles</div>

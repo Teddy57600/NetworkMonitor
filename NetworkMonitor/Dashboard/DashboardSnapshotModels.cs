@@ -8,6 +8,7 @@ sealed class DashboardSnapshot
     public DateTimeOffset StartedAt { get; init; }
     public string Version { get; init; } = string.Empty;
     public string Schedule { get; init; } = string.Empty;
+    public int DefaultSnoozeDays { get; init; }
     public string ConfigPath { get; init; } = string.Empty;
     public int ConfigVersion { get; init; }
     public string TimeZone { get; init; } = string.Empty;

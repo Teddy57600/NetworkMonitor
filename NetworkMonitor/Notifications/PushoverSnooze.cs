@@ -7,6 +7,13 @@ static class PushoverSnooze
 {
     public static DateTime GetSnoozeUntil(string key) => StateStore.GetSnoozeUntil(key);
     public static bool IsSnoozed(string key) => DateTime.UtcNow < GetSnoozeUntil(key);
+    public static DateTime SetSnooze(string key, TimeSpan duration)
+    {
+        var snoozeUntil = DateTime.UtcNow.Add(duration);
+        StateStore.SetSnooze(key, snoozeUntil);
+        return snoozeUntil;
+    }
+
     public static void ClearSnooze(string key) => StateStore.ClearSnooze(key);
 
     public static void StartWatching(string key, string receipt, ILogger logger, CancellationToken ct)

@@ -246,6 +246,11 @@ body {
     min-width: 180px;
 }
 
+.field-group.compact {
+    margin-top: 1rem;
+    max-width: 280px;
+}
+
 .field-group.grow {
     flex: 1 1 260px;
 }
@@ -259,7 +264,8 @@ body {
     font-size: .92rem;
 }
 
-.field-group input {
+.field-group input,
+.field-group select {
     border: 1px solid rgba(148, 163, 184, .18);
     background: rgba(15, 23, 42, .65);
     color: var(--text);
@@ -268,9 +274,16 @@ body {
     font: inherit;
 }
 
-.field-group input:focus {
+.field-group input:focus,
+.field-group select:focus {
     outline: 2px solid rgba(96, 165, 250, .4);
     border-color: rgba(96, 165, 250, .5);
+}
+
+.field-hint {
+    color: var(--muted);
+    font-size: .88rem;
+    line-height: 1.4;
 }
 
 .meta-list, .monitor-meta {
