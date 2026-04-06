@@ -77,7 +77,7 @@ static class DashboardWebServer
                 return;
             }
 
-            DashboardSessionAuth.SignIn(context.Response);
+            DashboardSessionAuth.SignIn(context.Request, context.Response);
             context.Response.Redirect("/");
         });
 

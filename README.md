@@ -674,8 +674,9 @@ Le dashboard affiche notamment :
 
 Une authentification simple via **page de connexion + cookie de session** peut être activée via :
 
-- `dashboard.authEnabled`, `dashboard.authUsername`, `dashboard.authPassword` dans le YAML
-- ou `DASHBOARD_AUTH_ENABLED`, `DASHBOARD_AUTH_USERNAME`, `DASHBOARD_AUTH_PASSWORD` via l'environnement
+- `dashboard.authEnabled`, `dashboard.authUsername`, `dashboard.authPasswordHash` dans le YAML
+- ou `DASHBOARD_AUTH_ENABLED`, `DASHBOARD_AUTH_USERNAME`, `DASHBOARD_AUTH_PASSWORD_HASH` via l'environnement
+- ou `DASHBOARD_AUTH_PASSWORD_HASH_FILE` pour lire le hash depuis un fichier secret Docker / Podman
 
 Exemple YAML :
 
@@ -684,7 +685,7 @@ dashboard:
   enabled: true
   authEnabled: true
   authUsername: "admin"
-  authPassword: "change-me"
+  authPasswordHash: "NM1$PBKDF2$SHA256$600000$base64-sel$base64-hash"
   refreshSeconds: 5
 ```
 
@@ -695,6 +696,27 @@ Quand elle est activée :
 - les routes du dashboard et les API associées sont protégées
 
 > Recommandation : si le dashboard est exposé hors du réseau local, placez-le derrière **HTTPS** ou un **reverse proxy** (Nginx, Traefik, Caddy). Même avec une page de connexion, un trafic HTTP non chiffré reste à éviter.
+
+Le cookie de session est automatiquement marqué **Secure** lorsque l'application est servie en HTTPS direct ou derrière un reverse proxy TLS qui transmet `X-Forwarded-Proto: https` (par exemple Traefik).
+
+#### Exemple avec secret Docker
+
+```yaml
+services:
+  networkmonitor:
+    image: ghcr.io/teddy57600/networkmonitor:latest
+    restart: unless-stopped
+    environment:
+      DASHBOARD_AUTH_ENABLED: "true"
+      DASHBOARD_AUTH_USERNAME: "admin"
+      DASHBOARD_AUTH_PASSWORD_HASH_FILE: "/run/secrets/dashboard_password_hash"
+    secrets:
+      - dashboard_password_hash
+
+secrets:
+  dashboard_password_hash:
+    file: ./secrets/dashboard_password_hash.txt
+```
 
 #### Exemple Traefik
 
@@ -720,16 +742,16 @@ services:
       - traefik-letsencrypt:/letsencrypt
 
   networkmonitor:
-    build:
-      context: .
-      dockerfile: NetworkMonitor/Dockerfile
+    image: ghcr.io/teddy57600/networkmonitor:latest
     restart: unless-stopped
     environment:
       DATA_DIR: /data
       CONFIG_YAML_PATH: /config/config.yaml
       DASHBOARD_AUTH_ENABLED: "true"
       DASHBOARD_AUTH_USERNAME: "admin"
-      DASHBOARD_AUTH_PASSWORD: "change-me"
+      DASHBOARD_AUTH_PASSWORD_HASH_FILE: "/run/secrets/dashboard_password_hash"
+    secrets:
+      - dashboard_password_hash
     volumes:
       - ./config.yaml:/config/config.yaml
       - networkmonitor-data:/data
@@ -744,6 +766,10 @@ services:
 volumes:
   networkmonitor-data:
   traefik-letsencrypt:
+
+secrets:
+  dashboard_password_hash:
+    file: ./secrets/dashboard_password_hash.txt
 ```
 
 Dans cet exemple :

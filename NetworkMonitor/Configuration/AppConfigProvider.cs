@@ -15,7 +15,7 @@ sealed class AppConfig
     public bool DashboardEnabled { get; init; } = true;
     public bool DashboardAuthEnabled { get; init; }
     public string DashboardAuthUsername { get; init; } = string.Empty;
-    public string DashboardAuthPassword { get; init; } = string.Empty;
+    public string DashboardAuthPasswordHash { get; init; } = string.Empty;
     public int DashboardRefreshSeconds { get; init; } = 5;
     public IReadOnlyList<string> PingTargets { get; init; } = [];
     public IReadOnlyList<TcpTargetConfig> TcpTargets { get; init; } = [];
@@ -446,6 +446,11 @@ static class AppConfigProvider
             SnoozeDays = source.SnoozeDays,
             ScheduleCron = source.ScheduleCron,
             ScheduleIntervalSeconds = source.ScheduleIntervalSeconds,
+            DashboardEnabled = source.DashboardEnabled,
+            DashboardAuthEnabled = source.DashboardAuthEnabled,
+            DashboardAuthUsername = source.DashboardAuthUsername,
+            DashboardAuthPasswordHash = source.DashboardAuthPasswordHash,
+            DashboardAuthPasswordHashFile = source.DashboardAuthPasswordHashFile,
             DashboardRefreshSeconds = source.DashboardRefreshSeconds,
             PingTargets = source.PingTargets is null ? null : [.. source.PingTargets],
             TcpTargets = source.TcpTargets is null ? null : [.. source.TcpTargets.Select(target => new TcpTargetConfig { Host = target.Host, Port = target.Port })]
@@ -470,6 +475,11 @@ static class AppConfigProvider
 
         AppendBlankLine(lines);
         AppendScalarSection(lines, "dashboard", [
+            ("enabled", config.DashboardEnabled?.ToString().ToLowerInvariant(), true),
+            ("authEnabled", config.DashboardAuthEnabled?.ToString().ToLowerInvariant(), true),
+            ("authUsername", config.DashboardAuthUsername, false),
+            ("authPasswordHash", config.DashboardAuthPasswordHash, false),
+            ("authPasswordHashFile", config.DashboardAuthPasswordHashFile, false),
             ("refreshSeconds", config.DashboardRefreshSeconds?.ToString(), true)
         ]);
 
@@ -510,7 +520,7 @@ static class AppConfigProvider
         return string.Join(Environment.NewLine, lines) + Environment.NewLine;
     }
 
-    private static void AppendScalarSection(List<string> lines, string sectionName, IEnumerable<(string Key, string? Value, bool IsNumeric)> entries)
+    private static void AppendScalarSection(List<string> lines, string sectionName, IEnumerable<(string Key, string? Value, bool RenderRaw)> entries)
     {
         var sectionEntries = entries.Where(entry => !string.IsNullOrWhiteSpace(entry.Value)).ToArray();
         if (sectionEntries.Length == 0)
@@ -519,7 +529,7 @@ static class AppConfigProvider
         lines.Add($"{sectionName}:");
         foreach (var entry in sectionEntries)
         {
-            var renderedValue = entry.IsNumeric ? entry.Value! : QuoteYaml(entry.Value!);
+            var renderedValue = entry.RenderRaw ? entry.Value! : QuoteYaml(entry.Value!);
             lines.Add($"  {entry.Key}: {renderedValue}");
         }
     }
@@ -572,11 +582,29 @@ static class AppConfigProvider
             DashboardEnabled = yamlConfig.DashboardEnabled ?? ParseBoolean(Environment.GetEnvironmentVariable("DASHBOARD_ENABLED"), true),
             DashboardAuthEnabled = yamlConfig.DashboardAuthEnabled ?? ParseBoolean(Environment.GetEnvironmentVariable("DASHBOARD_AUTH_ENABLED"), false),
             DashboardAuthUsername = FirstNonEmpty(yamlConfig.DashboardAuthUsername, Environment.GetEnvironmentVariable("DASHBOARD_AUTH_USERNAME")) ?? string.Empty,
-            DashboardAuthPassword = FirstNonEmpty(yamlConfig.DashboardAuthPassword, Environment.GetEnvironmentVariable("DASHBOARD_AUTH_PASSWORD")) ?? string.Empty,
+            DashboardAuthPasswordHash = FirstNonEmpty(
+                ReadSecretFile(FirstNonEmpty(yamlConfig.DashboardAuthPasswordHashFile, Environment.GetEnvironmentVariable("DASHBOARD_AUTH_PASSWORD_HASH_FILE"))),
+                yamlConfig.DashboardAuthPasswordHash,
+                Environment.GetEnvironmentVariable("DASHBOARD_AUTH_PASSWORD_HASH")) ?? string.Empty,
             DashboardRefreshSeconds = yamlConfig.DashboardRefreshSeconds ?? ParsePositiveInt(Environment.GetEnvironmentVariable("DASHBOARD_REFRESH_SECONDS"), 5),
             PingTargets = MergePingTargets(environmentPingTargets, yamlPingTargets),
             TcpTargets = MergeTcpTargets(environmentTcpTargets, yamlTcpTargets)
         };
+    }
+
+    private static string? ReadSecretFile(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
+            return null;
+
+        try
+        {
+            return File.ReadAllText(path).Trim();
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     private static IReadOnlyList<string> MergePingTargets(IReadOnlyList<string> environmentTargets, IReadOnlyList<string> yamlTargets)
@@ -766,8 +794,11 @@ static class AppConfigProvider
                 case "authUsername":
                     config.DashboardAuthUsername = Unquote(value);
                     break;
-                case "authPassword":
-                    config.DashboardAuthPassword = Unquote(value);
+                case "authPasswordHash":
+                    config.DashboardAuthPasswordHash = Unquote(value);
+                    break;
+                case "authPasswordHashFile":
+                    config.DashboardAuthPasswordHashFile = Unquote(value);
                     break;
                 case "refreshSeconds":
                     config.DashboardRefreshSeconds = ParseYamlPositiveInt(value, key);
@@ -1090,7 +1121,8 @@ sealed class YamlAppConfig
     public bool? DashboardEnabled { get; set; }
     public bool? DashboardAuthEnabled { get; set; }
     public string? DashboardAuthUsername { get; set; }
-    public string? DashboardAuthPassword { get; set; }
+    public string? DashboardAuthPasswordHash { get; set; }
+    public string? DashboardAuthPasswordHashFile { get; set; }
     public int? DashboardRefreshSeconds { get; set; }
     public List<string>? PingTargets { get; set; }
     public List<TcpTargetConfig>? TcpTargets { get; set; }
