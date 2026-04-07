@@ -65,5 +65,5 @@ EXPOSE 8080
 
 ENTRYPOINT ["./NetworkMonitor"]
 
-ENV APP_VERSION="1.8.5"
-LABEL Version="1.8.5"
+ENV APP_VERSION="1.8.7"
+LABEL Version="1.8.7"

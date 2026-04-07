@@ -387,8 +387,18 @@ static class AppConfigProvider
         try
         {
             Directory.CreateDirectory(directory);
-            File.WriteAllText(tempPath, BuildYamlContent(updatedConfig));
-            File.Move(tempPath, path, true);
+            var yamlContent = BuildYamlContent(updatedConfig);
+            File.WriteAllText(tempPath, yamlContent);
+
+            try
+            {
+                File.Move(tempPath, path, true);
+            }
+            catch (IOException) when (File.Exists(path))
+            {
+                File.WriteAllText(path, yamlContent);
+                File.Delete(tempPath);
+            }
 
             _yamlConfig = updatedConfig;
             _fileExists = true;
