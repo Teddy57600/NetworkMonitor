@@ -8,6 +8,7 @@ class MonitorState
 {
     private readonly string _ip;
     private readonly ILogger _logger;
+    private DateTime? _lastEscalationAt;
     private int _failCount = 0;
     private bool _isDown = false;
     private DateTime? _downSince = null;
@@ -26,6 +27,7 @@ class MonitorState
         {
             _isDown = true;
             _downSince = snapshot.DownSince;
+            _lastEscalationAt = snapshot.DownSince;
         }
     }
 
@@ -55,6 +57,8 @@ class MonitorState
             {
                 _isDown = true;
                 _downSince = DateTime.UtcNow;
+                _lastEscalationAt = _downSince;
+                StateStore.StartIncident(_ip, "Ping", _ip, _downSince.Value);
 
                 _logger.LogWarning("🔴 DOWN : IP {Ip} injoignable après {Count} échecs consécutifs", _ip, _failCount);
                 await PushoverClient.SendAsync("🔴 DOWN", $"IP {_ip} KO", 1, _ip, _logger, ct);
@@ -64,12 +68,12 @@ class MonitorState
                 StateStore.SetMonitor(_ip, new MonitorSnapshot { IsDown = true, DownSince = _downSince });
             }
             else if (_isDown && _downSince.HasValue &&
-                     (DateTime.UtcNow - _downSince.Value).TotalMinutes > 5)
+                     (DateTime.UtcNow - (_lastEscalationAt ?? _downSince.Value)).TotalMinutes > 5)
             {
                 _logger.LogError("🚨 STILL DOWN : IP {Ip} toujours KO depuis {Minutes:F0} min", _ip, (DateTime.UtcNow - _downSince.Value).TotalMinutes);
                 await PushoverClient.SendAsync("🚨 STILL DOWN", $"IP {_ip} toujours KO", 2, _ip, _logger, ct);
 
-                _downSince = DateTime.UtcNow;
+                _lastEscalationAt = DateTime.UtcNow;
             }
         }
         else
@@ -77,6 +81,7 @@ class MonitorState
             _lastSuccessAt = DateTime.UtcNow;
             if (_isDown)
             {
+                StateStore.ResolveIncident(_ip, _lastSuccessAt.Value);
                 _logger.LogInformation("🟢 RECOVERY : IP {Ip} de nouveau joignable", _ip);
                 await PushoverClient.SendAsync("🟢 RECOVERY", $"IP {_ip} OK", 0, _ip, _logger, ct);
             }
@@ -84,6 +89,8 @@ class MonitorState
             _logger.LogInformation("IP {Ip} est UP", _ip);
             _failCount = 0;
             _isDown = false;
+            _downSince = null;
+            _lastEscalationAt = null;
             StateStore.SetMonitor(_ip, new MonitorSnapshot { IsDown = false });
         }
     }

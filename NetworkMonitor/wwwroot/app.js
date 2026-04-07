@@ -1,8 +1,139 @@
 const refreshIntervalMs = 5000;
+const refreshIntervalStorageKey = 'networkmonitor-refresh-interval';
 
 let refreshTimerId = null;
 let currentRefreshIntervalMs = 5000;
+let serverRefreshIntervalMs = 5000;
 let defaultSnoozeDays = 1;
+let lastSummary = null;
+let lastIncidents = [];
+
+function formatRefreshIntervalLabel(milliseconds) {
+    const totalSeconds = Math.max(1, Math.round(milliseconds / 1000));
+    if (totalSeconds % 60 === 0) {
+        const minutes = totalSeconds / 60;
+        return `${minutes} minute${minutes > 1 ? 's' : ''}`;
+    }
+
+    return `${totalSeconds} seconde${totalSeconds > 1 ? 's' : ''}`;
+}
+
+function getRefreshPreference() {
+    return localStorage.getItem(refreshIntervalStorageKey) ?? 'auto';
+}
+
+function syncRefreshIntervalSelector() {
+    const select = document.getElementById('refreshIntervalSelect');
+    const hint = document.getElementById('refreshIntervalHint');
+    if (!select || !hint) {
+        return;
+    }
+
+    const preference = getRefreshPreference();
+    select.value = Array.from(select.options).some(option => option.value === preference) ? preference : 'auto';
+    hint.textContent = `Fréquence configurée côté service : ${formatRefreshIntervalLabel(serverRefreshIntervalMs)}.`;
+}
+
+function applyRefreshIntervalPreference() {
+    const preference = getRefreshPreference();
+    currentRefreshIntervalMs = preference === 'auto'
+        ? serverRefreshIntervalMs
+        : Math.max(1000, Number(preference) || serverRefreshIntervalMs);
+}
+
+function updateRefreshIntervalDisplay() {
+    const preference = getRefreshPreference();
+    const suffix = preference === 'auto' ? 'auto' : 'manuel';
+    setText('refreshInterval', `${formatRefreshIntervalLabel(currentRefreshIntervalMs)} (${suffix})`);
+}
+
+function getIncidentFilters() {
+    return {
+        status: document.getElementById('incidentStatusFilter')?.value ?? 'all',
+        type: document.getElementById('incidentTypeFilter')?.value ?? 'all',
+        search: document.getElementById('incidentSearchInput')?.value.trim().toLowerCase() ?? ''
+    };
+}
+
+function filterIncidents(incidents) {
+    const filters = getIncidentFilters();
+
+    return incidents.filter(incident => {
+        if (filters.status === 'open' && !incident.isOpen) {
+            return false;
+        }
+
+        if (filters.status === 'resolved' && incident.isOpen) {
+            return false;
+        }
+
+        if (filters.type !== 'all' && incident.type !== filters.type) {
+            return false;
+        }
+
+        if (!filters.search) {
+            return true;
+        }
+
+        const haystack = `${incident.displayName} ${incident.key} ${incident.type}`.toLowerCase();
+        return haystack.includes(filters.search);
+    });
+}
+
+function updateIncidentFilterSummary(visibleCount, totalCount) {
+    const summary = document.getElementById('incidentFilterSummary');
+    if (!summary) {
+        return;
+    }
+
+    summary.textContent = visibleCount === totalCount
+        ? `${totalCount} incident${totalCount > 1 ? 's' : ''}`
+        : `${visibleCount} / ${totalCount} incident${totalCount > 1 ? 's' : ''}`;
+}
+
+function updatePageChrome(summary) {
+    lastSummary = summary;
+
+    if (!summary || summary.total === 0) {
+        document.title = 'NetworkMonitor Dashboard';
+        setDynamicFavicon('neutral');
+        return;
+    }
+
+    if (summary.down > 0) {
+        document.title = `(${summary.down}) DOWN • NetworkMonitor Dashboard`;
+        setDynamicFavicon('danger');
+        return;
+    }
+
+    if (summary.snoozed > 0) {
+        document.title = `(${summary.snoozed}) Snoozé • NetworkMonitor Dashboard`;
+        setDynamicFavicon('warning');
+        return;
+    }
+
+    document.title = 'OK • NetworkMonitor Dashboard';
+    setDynamicFavicon('good');
+}
+
+function setDynamicFavicon(state) {
+    const favicon = document.getElementById('appFavicon');
+    if (!favicon) {
+        return;
+    }
+
+    const theme = window.NetworkMonitorTheme?.getCurrentTheme?.() ?? 'dark';
+    const colors = {
+        good: { pulse: '#22c55e', frame: '#0f172a', screen: theme === 'light' ? '#f8fafc' : '#e5eefb' },
+        warning: { pulse: '#f59e0b', frame: '#7c2d12', screen: theme === 'light' ? '#fff7ed' : '#ffedd5' },
+        danger: { pulse: '#ef4444', frame: '#7f1d1d', screen: theme === 'light' ? '#fef2f2' : '#fee2e2' },
+        neutral: { pulse: '#94a3b8', frame: '#334155', screen: theme === 'light' ? '#f8fafc' : '#e2e8f0' }
+    };
+
+    const palette = colors[state] ?? colors.neutral;
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect x="4" y="4" width="56" height="56" rx="16" fill="${theme === 'light' ? '#dbeafe' : '#172554'}"/><rect x="14" y="16" width="36" height="24" rx="5" fill="${palette.screen}" opacity="0.96"/><rect x="18" y="20" width="28" height="16" rx="3" fill="${palette.frame}"/><path d="M20 29h5l3-5 4 10 4-7 2 2h6" fill="none" stroke="${palette.pulse}" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/><path d="M22 47h20" stroke="${theme === 'light' ? '#334155' : '#cbd5e1'}" stroke-width="4" stroke-linecap="round"/><path d="M16 52h32" stroke="${theme === 'light' ? '#64748b' : '#94a3b8'}" stroke-width="4" stroke-linecap="round"/></svg>`;
+    favicon.href = `data:image/svg+xml,${encodeURIComponent(svg)}`;
+}
 
 function formatSnoozeDurationLabel(totalMinutes) {
     if (totalMinutes % 1440 === 0) {
@@ -16,6 +147,34 @@ function formatSnoozeDurationLabel(totalMinutes) {
     }
 
     return `${totalMinutes} minute${totalMinutes > 1 ? 's' : ''}`;
+}
+
+function formatIncidentDuration(startedAt, resolvedAt) {
+    if (!startedAt) {
+        return '—';
+    }
+
+    const start = new Date(startedAt);
+    const end = resolvedAt ? new Date(resolvedAt) : new Date();
+    const totalSeconds = Math.max(0, Math.round((end - start) / 1000));
+    const days = Math.floor(totalSeconds / 86400);
+    const hours = Math.floor((totalSeconds % 86400) / 3600);
+    const minutes = Math.floor((totalSeconds % 3600) / 60);
+
+    const parts = [];
+    if (days > 0) {
+        parts.push(`${days}j`);
+    }
+
+    if (hours > 0) {
+        parts.push(`${hours}h`);
+    }
+
+    if (minutes > 0 || parts.length === 0) {
+        parts.push(`${minutes}min`);
+    }
+
+    return parts.join(' ');
 }
 
 function getDefaultSnoozeDurationMinutes() {
@@ -158,6 +317,54 @@ async function requestImmediateCheck() {
     finally {
         button.disabled = false;
     }
+}
+
+function renderIncidentList(containerId, incidents) {
+    const container = document.getElementById(containerId);
+    container.innerHTML = '';
+
+    const filteredIncidents = filterIncidents(incidents ?? []);
+    updateIncidentFilterSummary(filteredIncidents.length, incidents?.length ?? 0);
+
+    if (!filteredIncidents.length) {
+        const emptyState = document.createElement('div');
+        emptyState.className = 'empty-state';
+        emptyState.textContent = incidents?.length ? 'Aucun incident ne correspond aux filtres.' : 'Aucun incident récent.';
+        container.appendChild(emptyState);
+        return;
+    }
+
+    const template = document.getElementById('incident-template');
+
+    filteredIncidents.forEach((incident) => {
+        const node = template.content.firstElementChild.cloneNode(true);
+        node.querySelector('.incident-type').textContent = incident.type;
+        node.querySelector('.incident-name').textContent = incident.displayName;
+
+        const status = node.querySelector('.incident-status');
+        status.textContent = incident.isOpen ? 'En cours' : 'Résolu';
+        status.classList.add(incident.isOpen ? 'open' : 'resolved');
+
+        const meta = node.querySelector('.incident-meta');
+        const rows = [
+            ['Clé', incident.key],
+            ['Début', formatDate(incident.startedAt)],
+            ['Fin', incident.resolvedAt ? formatDate(incident.resolvedAt) : 'Toujours actif'],
+            ['Durée', formatIncidentDuration(incident.startedAt, incident.resolvedAt)]
+        ];
+
+        rows.forEach(([label, value]) => {
+            const wrapper = document.createElement('div');
+            const dt = document.createElement('dt');
+            const dd = document.createElement('dd');
+            dt.textContent = label;
+            dd.textContent = value;
+            wrapper.append(dt, dd);
+            meta.appendChild(wrapper);
+        });
+
+        container.appendChild(node);
+    });
 }
 
 async function snoozeMonitor(key, button) {
@@ -415,11 +622,14 @@ async function refresh() {
         }
 
         const data = await response.json();
-        currentRefreshIntervalMs = Math.max(1, Number(data.refreshIntervalSeconds ?? 5)) * 1000;
+        serverRefreshIntervalMs = Math.max(1, Number(data.refreshIntervalSeconds ?? 5)) * 1000;
         defaultSnoozeDays = Math.max(1, Number(data.defaultSnoozeDays ?? 1));
+        syncRefreshIntervalSelector();
+        applyRefreshIntervalPreference();
         syncSnoozeDurationSelector();
 
         updateGlobalHealth(data.summary);
+        updatePageChrome(data.summary);
         setText('subtitle', `${data.summary.total} moniteur(s) • ${data.summary.up} UP • ${data.summary.down} DOWN`);
         setText('generatedAt', `MàJ ${formatDate(data.generatedAt)}`);
         setText('timeZone', data.timeZone);
@@ -432,10 +642,12 @@ async function refresh() {
         setText('configPath', data.configPath);
         setText('configVersion', data.configVersion);
         setText('startedAt', formatDate(data.startedAt));
-        setText('refreshInterval', `${Math.round(currentRefreshIntervalMs / 1000)} s`);
+        updateRefreshIntervalDisplay();
 
         renderMonitorList('pingMonitors', data.pingMonitors);
         renderMonitorList('tcpMonitors', data.tcpMonitors);
+        lastIncidents = data.recentIncidents ?? [];
+        renderIncidentList('incidentHistory', lastIncidents);
     }
     catch (error) {
         setText('subtitle', `Erreur de chargement du tableau de bord : ${error.message}`);
@@ -448,4 +660,14 @@ async function refresh() {
 document.getElementById('checkNowButton').addEventListener('click', requestImmediateCheck);
 document.getElementById('pingTargetForm').addEventListener('submit', addPingTarget);
 document.getElementById('tcpTargetForm').addEventListener('submit', addTcpTarget);
+document.getElementById('refreshIntervalSelect').addEventListener('change', event => {
+    localStorage.setItem(refreshIntervalStorageKey, event.currentTarget.value);
+    applyRefreshIntervalPreference();
+    updateRefreshIntervalDisplay();
+    scheduleNextRefresh();
+});
+document.getElementById('incidentStatusFilter').addEventListener('change', () => renderIncidentList('incidentHistory', lastIncidents));
+document.getElementById('incidentTypeFilter').addEventListener('change', () => renderIncidentList('incidentHistory', lastIncidents));
+document.getElementById('incidentSearchInput').addEventListener('input', () => renderIncidentList('incidentHistory', lastIncidents));
+document.addEventListener('networkmonitor:theme-changed', () => updatePageChrome(lastSummary));
 refresh();

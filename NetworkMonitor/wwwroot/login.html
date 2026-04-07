@@ -4,7 +4,13 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Connexion - NetworkMonitor</title>
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <script>
+        const storedTheme = localStorage.getItem('networkmonitor-theme');
+        if (storedTheme) {
+            document.documentElement.dataset.theme = storedTheme;
+        }
+    </script>
+    <link id="appFavicon" rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="stylesheet" href="/site.css" />
 </head>
 <body>
@@ -14,6 +20,9 @@
                 <p class="eyebrow">NetworkMonitor</p>
                 <h1>Connexion au dashboard</h1>
                 <p class="subtitle">Authentification requise pour accéder au tableau de bord.</p>
+                <div class="hero-actions login-actions">
+                    <button id="themeToggleButton" type="button" class="action-button ghost">☀️ Mode clair</button>
+                </div>
                 <div class="login-meta">
                     <span class="badge">Version {{APP_VERSION}}</span>
                     <span class="badge badge-muted">Fuseau {{TIMEZONE}}</span>
@@ -41,6 +50,7 @@
         </section>
     </div>
 
+    <script src="/theme.js"></script>
     <script>
         const params = new URLSearchParams(window.location.search);
         if (params.get('error') === '1') {

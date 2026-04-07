@@ -162,6 +162,18 @@ internal class Program
             .ToArray();
 
         var allSnapshots = pingSnapshots.Concat(tcpSnapshots).ToArray();
+        var recentIncidents = StateStore.GetRecentIncidents(20)
+            .Select(incident => new DashboardIncidentSnapshot
+            {
+                Id = incident.Id,
+                Key = incident.Key,
+                Type = incident.Type,
+                DisplayName = incident.DisplayName,
+                StartedAt = incident.StartedAt,
+                ResolvedAt = incident.ResolvedAt,
+                IsOpen = incident.ResolvedAt is null
+            })
+            .ToArray();
         var config = AppConfigProvider.Current;
 
         return new DashboardSnapshot
@@ -183,7 +195,8 @@ internal class Program
                 Snoozed = allSnapshots.Count(snapshot => snapshot.SnoozeUntil.HasValue)
             },
             PingMonitors = pingSnapshots,
-            TcpMonitors = tcpSnapshots
+            TcpMonitors = tcpSnapshots,
+            RecentIncidents = recentIncidents
         };
     }
 

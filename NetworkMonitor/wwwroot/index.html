@@ -4,7 +4,13 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>NetworkMonitor Dashboard</title>
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <script>
+        const storedTheme = localStorage.getItem('networkmonitor-theme');
+        if (storedTheme) {
+            document.documentElement.dataset.theme = storedTheme;
+        }
+    </script>
+    <link id="appFavicon" rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="stylesheet" href="/site.css" />
 </head>
 <body>
@@ -16,6 +22,7 @@
                 <p id="subtitle" class="subtitle">Chargement...</p>
                 <div class="hero-actions">
                     <button id="checkNowButton" type="button" class="action-button primary">Lancer un check immédiat</button>
+                    <button id="themeToggleButton" type="button" class="action-button ghost">☀️ Mode clair</button>
                     <form id="logoutForm" method="post" action="/logout">
                         <button id="logoutButton" type="submit" class="action-button ghost">Se déconnecter</button>
                     </form>
@@ -101,6 +108,19 @@
                     </select>
                     <span id="snoozeDurationHint" class="field-hint">Cette durée sera utilisée par le bouton Snoozer.</span>
                 </div>
+                <div class="field-group compact">
+                    <label for="refreshIntervalSelect">Auto-refresh</label>
+                    <select id="refreshIntervalSelect" name="refreshInterval">
+                        <option value="auto">Auto (config)</option>
+                        <option value="5000">5 secondes</option>
+                        <option value="10000">10 secondes</option>
+                        <option value="15000">15 secondes</option>
+                        <option value="30000">30 secondes</option>
+                        <option value="60000">1 minute</option>
+                        <option value="120000">2 minutes</option>
+                    </select>
+                    <span id="refreshIntervalHint" class="field-hint">La page se rechargera automatiquement selon ce rythme.</span>
+                </div>
             </article>
             <article class="panel">
                 <div class="panel-title">Ajouter des cibles</div>
@@ -147,6 +167,39 @@
             </div>
             <div id="tcpMonitors" class="cards-grid"></div>
         </section>
+
+        <section class="panel">
+            <div class="panel-header">
+                <div>
+                    <h2>Historique des incidents</h2>
+                    <p>Derniers incidents détectés sur les cibles surveillées</p>
+                </div>
+                <span id="incidentFilterSummary" class="badge badge-muted">--</span>
+            </div>
+            <div class="incident-filters">
+                <div class="field-group compact">
+                    <label for="incidentStatusFilter">Statut</label>
+                    <select id="incidentStatusFilter" name="incidentStatusFilter">
+                        <option value="all">Tous</option>
+                        <option value="open">En cours</option>
+                        <option value="resolved">Résolus</option>
+                    </select>
+                </div>
+                <div class="field-group compact">
+                    <label for="incidentTypeFilter">Type</label>
+                    <select id="incidentTypeFilter" name="incidentTypeFilter">
+                        <option value="all">Tous</option>
+                        <option value="Ping">Ping</option>
+                        <option value="TCP">TCP</option>
+                    </select>
+                </div>
+                <div class="field-group compact grow">
+                    <label for="incidentSearchInput">Recherche</label>
+                    <input id="incidentSearchInput" name="incidentSearchInput" type="search" placeholder="Filtrer par nom, clé ou type" />
+                </div>
+            </div>
+            <div id="incidentHistory" class="incident-list"></div>
+        </section>
     </div>
 
     <template id="monitor-template">
@@ -163,6 +216,20 @@
         </article>
     </template>
 
+    <template id="incident-template">
+        <article class="incident-card">
+            <div class="incident-head">
+                <div>
+                    <span class="incident-type"></span>
+                    <h3 class="incident-name"></h3>
+                </div>
+                <span class="incident-status"></span>
+            </div>
+            <dl class="incident-meta"></dl>
+        </article>
+    </template>
+
+    <script src="/theme.js"></script>
     <script src="/app.js"></script>
 </body>
 </html>

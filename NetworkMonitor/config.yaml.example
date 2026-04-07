@@ -12,7 +12,7 @@ dashboard:
   enabled: true
   authEnabled: false
   authUsername: "admin"
-  authPassword: "change-me"
+  authPasswordHash: "NM1$PBKDF2$SHA256$600000$base64-sel$base64-hash"
   refreshSeconds: 5
 
 pushover:

@@ -9,6 +9,7 @@ class TcpPortMonitorState
     private readonly string _host;
     private readonly int _port;
     private readonly ILogger _logger;
+    private DateTime? _lastEscalationAt;
     private int _failCount = 0;
     private bool _isDown = false;
     private DateTime? _downSince = null;
@@ -28,6 +29,7 @@ class TcpPortMonitorState
         {
             _isDown = true;
             _downSince = snapshot.DownSince;
+            _lastEscalationAt = snapshot.DownSince;
         }
     }
 
@@ -57,6 +59,8 @@ class TcpPortMonitorState
             {
                 _isDown = true;
                 _downSince = DateTime.UtcNow;
+                _lastEscalationAt = _downSince;
+                StateStore.StartIncident($"{_host}:{_port}", "TCP", $"{_host}:{_port}", _downSince.Value);
 
                 _logger.LogWarning("🔴 DOWN : {Host}:{Port} inaccessible après {Count} tentatives", _host, _port, _failCount * 3);
                 await PushoverClient.SendAsync("🔴 DOWN", $"Port TCP {_port} ({_host}) KO", 1, $"{_host}:{_port}", _logger, ct);
@@ -66,12 +70,12 @@ class TcpPortMonitorState
                 StateStore.SetMonitor($"{_host}:{_port}", new MonitorSnapshot { IsDown = true, DownSince = _downSince });
             }
             else if (_isDown && _downSince.HasValue &&
-                     (DateTime.UtcNow - _downSince.Value).TotalMinutes > 5)
+                     (DateTime.UtcNow - (_lastEscalationAt ?? _downSince.Value)).TotalMinutes > 5)
             {
                 _logger.LogError("🚨 STILL DOWN : {Host}:{Port} toujours KO depuis {Minutes:F0} min", _host, _port, (DateTime.UtcNow - _downSince.Value).TotalMinutes);
                 await PushoverClient.SendAsync("🚨 STILL DOWN", $"Port TCP {_port} ({_host}) toujours KO", 2, $"{_host}:{_port}", _logger, ct);
 
-                _downSince = DateTime.UtcNow;
+                _lastEscalationAt = DateTime.UtcNow;
             }
         }
         else
@@ -79,6 +83,7 @@ class TcpPortMonitorState
             _lastSuccessAt = DateTime.UtcNow;
             if (_isDown)
             {
+                StateStore.ResolveIncident($"{_host}:{_port}", _lastSuccessAt.Value);
                 _logger.LogInformation("🟢 RECOVERY : {Host}:{Port} de nouveau accessible", _host, _port);
                 await PushoverClient.SendAsync("🟢 RECOVERY", $"Port TCP {_port} ({_host}) OK", 0, $"{_host}:{_port}", _logger, ct);
             }
@@ -86,6 +91,8 @@ class TcpPortMonitorState
             _logger.LogInformation("TCP {Host}:{Port} est UP", _host, _port);
             _failCount = 0;
             _isDown = false;
+            _downSince = null;
+            _lastEscalationAt = null;
             StateStore.SetMonitor($"{_host}:{_port}", new MonitorSnapshot { IsDown = false });
         }
     }
