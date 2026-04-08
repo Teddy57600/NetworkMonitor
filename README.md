@@ -25,6 +25,7 @@ Elle permet de :
 - surveiller des **endpoints HTTP/HTTPS** avec code HTTP et texte attendu
 - surveiller des **résolutions DNS** forward et reverse DNS (PTR)
 - afficher un **tableau de bord web responsive** avec vue temps réel
+- générer un **hash de mot de passe compatible** avec `authPasswordHash` depuis le dashboard
 - envoyer des notifications **Pushover** lors d'une panne, d'une reprise et d'une indisponibilité prolongée
 - envoyer une notification **au démarrage et à l'arrêt** du service
 - persister l'état des moniteurs et des snoozes dans `state.json`
@@ -100,12 +101,15 @@ Le projet cible **.NET 11** et active la **publication Native AOT**.
 - action web pour demander un **check immédiat**
 - action web pour **activer un snooze** sur un moniteur
 - action web pour **supprimer un snooze** sur un moniteur
-- formulaires web pour **ajouter une cible Ping** ou **un test TCP**
-- boutons web pour **supprimer une cible Ping** ou **un test TCP**
+- formulaires web pour **ajouter des cibles Ping, TCP, HTTP et DNS**
+- boutons web pour **supprimer des cibles YAML** sur tous les types supportés
 - **édition complète du YAML** depuis le dashboard
 - **import / export** de configuration YAML
+- outil **Hash password** pour générer un hash compatible `authPasswordHash`
 - filtres et recherche sur l'historique des incidents
-- filtres, recherche et tri sur les listes de moniteurs
+- filtres multi-sélection, recherche et tri sur les listes de moniteurs
+- compteurs par option dans les filtres du dashboard
+- organisation du dashboard par **onglets**
 - mode **dark / light** mémorisé côté navigateur
 - favicon et titre d'onglet dynamiques selon l'état global
 - rafraîchissement automatique configurable
@@ -750,29 +754,40 @@ Endpoints utiles :
 - `GET /api/config/export` : exporte la configuration YAML courante
 - `POST /api/config/raw` : remplace complètement la configuration YAML
 - `POST /api/config/import` : importe un fichier YAML
+- `POST /api/auth/hash-password` : génère un hash compatible `authPasswordHash`
 - `POST /api/actions/check-now` : demande un cycle de vérification immédiat
 - `POST /api/actions/snooze?key=...` : active un snooze sur un moniteur
 - `POST /api/actions/clear-snooze?key=...` : supprime le snooze d'un moniteur
 - `POST /api/actions/add-ping?target=...` : ajoute une cible Ping au YAML
 - `POST /api/actions/add-tcp?host=...&port=...` : ajoute un test TCP au YAML
+- `POST /api/actions/add-http?url=...` : ajoute un test HTTP/HTTPS au YAML
+- `POST /api/actions/add-dns?host=...` : ajoute un test DNS forward au YAML
+- `POST /api/actions/add-dns-reverse?ip=...` : ajoute un test reverse DNS / PTR au YAML
 - `POST /api/actions/remove-ping?target=...` : supprime une cible Ping du YAML
 - `POST /api/actions/remove-tcp?host=...&port=...` : supprime un test TCP du YAML
+- `POST /api/actions/remove-http?url=...` : supprime un test HTTP/HTTPS du YAML
+- `POST /api/actions/remove-dns?host=...` : supprime un test DNS forward du YAML
+- `POST /api/actions/remove-dns-reverse?ip=...` : supprime un test reverse DNS / PTR du YAML
 
 Le dashboard affiche notamment :
 
 - les compteurs globaux UP / DOWN / snoozés
 - les moniteurs Ping, TCP, HTTP et DNS
+- pour les checks DNS PTR, le **nom d'hôte concerné**
 - la date du dernier contrôle, du dernier succès et du dernier échec
 - la durée du dernier test
 - l'état du circuit breaker
 - la fin éventuelle du snooze
 - l'historique récent des incidents
-- des filtres, une recherche et un tri sur les moniteurs
+- des onglets **Vue globale / Moniteurs / Configuration / Incidents**
+- des filtres multi-sélection, une recherche et un tri sur les moniteurs
 - des filtres et une recherche sur l'historique des incidents
+- des animations d'ouverture sur les menus de sélection
 - un mode sombre / clair mémorisé côté navigateur
 - l'édition, l'import et l'export du YAML
-- des formulaires pour ajouter rapidement des cibles Ping et TCP
-- des boutons pour supprimer rapidement des cibles gérées par le YAML
+- un outil pour générer un hash de mot de passe compatible avec `authPasswordHash`
+- des formulaires pour ajouter rapidement des cibles Ping, TCP, HTTP et DNS
+- des boutons pour supprimer rapidement des cibles gérées par le YAML sur tous les types de checks
 
 ### Sécurité du dashboard
 

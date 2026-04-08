@@ -3,6 +3,7 @@
 ## General Guidelines
 - When a UI issue persists after a fix, re-investigate the exact styling/behavior before considering it resolved.
 - When adding UI animations, prefer clearly visible effects rather than very subtle transitions.
+- For every new feature added to this project, always update README.md accordingly.
 
 ## Project-Specific Rules
 - For the web interface, use a login page with the same design as the dashboard instead of HTTP Basic authentication.
