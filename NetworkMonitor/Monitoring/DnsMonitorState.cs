@@ -17,6 +17,7 @@ class DnsMonitorState
     private DateTime? _lastSuccessAt;
     private DateTime? _lastFailureAt;
     private double? _lastDurationMs;
+    private string? _lastResolvedHostName;
 
     public DnsMonitorState(DnsTargetConfig target, ILogger logger)
     {
@@ -105,6 +106,7 @@ class DnsMonitorState
             Key = MonitorKey,
             Type = "DNS",
             DisplayName = DisplayName,
+            HostName = GetHostNameForDisplay(),
             Source = AppConfigProvider.GetDnsTargetSource(!string.IsNullOrWhiteSpace(_target.ReverseLookupIp) ? _target.ReverseLookupIp! : _target.Host),
             Status = _isDown ? "DOWN" : "UP",
             IsDown = _isDown,
@@ -127,6 +129,16 @@ class DnsMonitorState
         ? $"PTR {_target.ReverseLookupIp}"
         : _target.Host;
 
+    private string? GetHostNameForDisplay()
+    {
+        if (string.IsNullOrWhiteSpace(_target.ReverseLookupIp))
+            return null;
+
+        return !string.IsNullOrWhiteSpace(_target.ExpectedHost)
+            ? _target.ExpectedHost
+            : _lastResolvedHostName;
+    }
+
     private async Task<bool> CheckDnsWithRetry(CancellationToken ct)
     {
         for (var attempt = 1; attempt <= 3; attempt++)
@@ -142,6 +154,10 @@ class DnsMonitorState
                     else
                     {
                         var entry = await Dns.GetHostEntryAsync(ipAddress);
+                        _lastResolvedHostName = string.IsNullOrWhiteSpace(entry.HostName)
+                            ? null
+                            : entry.HostName.TrimEnd('.');
+
                         if (string.IsNullOrWhiteSpace(entry.HostName))
                         {
                             _logger.LogDebug("DNS PTR {Ip} — tentative {Attempt}/3 : aucun hostname retourné", _target.ReverseLookupIp, attempt);

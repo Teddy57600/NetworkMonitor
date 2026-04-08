@@ -133,6 +133,53 @@ body {
     box-shadow: var(--shadow);
 }
 
+.tab-strip {
+    display: flex;
+    gap: .75rem;
+    flex-wrap: wrap;
+    margin-bottom: 1rem;
+}
+
+.tab-button {
+    border: 1px solid var(--panel-border);
+    background: var(--panel);
+    color: var(--text);
+    border-radius: 999px;
+    padding: .8rem 1.15rem;
+    font: inherit;
+    font-weight: 600;
+    cursor: pointer;
+    box-shadow: var(--shadow);
+    transition: transform .15s ease, background .15s ease, border-color .15s ease, color .15s ease;
+}
+
+.tab-button:hover {
+    transform: translateY(-1px);
+}
+
+.tab-button.active {
+    background: linear-gradient(135deg, #2563eb, #3b82f6);
+    color: white;
+    border-color: transparent;
+}
+
+.tab-panel {
+    display: none;
+}
+
+.tab-panel.active {
+    display: block;
+}
+
+.tab-panel-stack {
+    display: grid;
+    gap: 1rem;
+}
+
+.overview-grid {
+    align-items: start;
+}
+
 .hero {
     border-radius: 24px;
     padding: 1.5rem;
@@ -386,6 +433,119 @@ body {
     border-color: rgba(96, 165, 250, .5);
 }
 
+.multiselect-filter {
+    position: relative;
+}
+
+.multiselect-filter-button {
+    width: 100%;
+    border: 1px solid rgba(148, 163, 184, .18);
+    background: rgba(15, 23, 42, .65);
+    color: var(--text);
+    border-radius: 14px;
+    padding: .8rem .95rem;
+    font: inherit;
+    text-align: left;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: .75rem;
+    cursor: pointer;
+}
+
+.multiselect-filter-button::after {
+    content: '▾';
+    color: var(--muted);
+    font-size: .9rem;
+}
+
+.multiselect-filter.open .multiselect-filter-button {
+    outline: 2px solid rgba(96, 165, 250, .4);
+    border-color: rgba(96, 165, 250, .5);
+}
+
+.multiselect-filter-panel {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: min(280px, calc(100vw - 1rem));
+    min-width: 220px;
+    padding: .7rem;
+    border-radius: 16px;
+    border: 1px solid var(--panel-border);
+    background: var(--panel);
+    box-shadow: var(--shadow);
+    backdrop-filter: blur(20px);
+    z-index: 1000;
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+    transform: translateY(-14px) scale(.94);
+    filter: blur(8px);
+    transform-origin: top left;
+    transition: opacity .24s ease-out, transform .24s ease-out, filter .24s ease-out, visibility .24s ease;
+    will-change: opacity, transform, filter;
+}
+
+.multiselect-filter-panel.open {
+    display: grid;
+    gap: .45rem;
+    opacity: 1;
+    visibility: visible;
+    pointer-events: auto;
+    transform: translateY(0) scale(1);
+    filter: blur(0);
+    animation: multiselect-spring-in .42s cubic-bezier(.18, .89, .32, 1.28);
+}
+
+@keyframes multiselect-spring-in {
+    0% {
+        opacity: 0;
+        transform: translateY(-18px) scale(.9);
+        filter: blur(10px);
+    }
+    55% {
+        opacity: 1;
+        transform: translateY(4px) scale(1.03);
+        filter: blur(0);
+    }
+    75% {
+        transform: translateY(-2px) scale(.992);
+    }
+    100% {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+        filter: blur(0);
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .multiselect-filter-panel {
+        transition: none;
+    }
+
+    .multiselect-filter-panel.open {
+        animation: none;
+    }
+}
+
+.multiselect-option {
+    display: flex;
+    align-items: center;
+    gap: .6rem;
+    color: var(--text);
+    font-size: .95rem;
+}
+
+.multiselect-option input {
+    accent-color: #3b82f6;
+}
+
+:root[data-theme="light"] .multiselect-filter-button {
+    background: rgba(255, 255, 255, .88);
+    color: #0f172a;
+}
+
 .config-editor {
     min-height: 320px;
     width: 100%;
@@ -525,4 +685,6 @@ body {
     .meta-list div, .monitor-meta div, .incident-meta div { grid-template-columns: 1fr; gap: .2rem; }
     .inline-form, .incident-filters { align-items: stretch; }
     .inline-form .action-button { width: 100%; }
+    .tab-strip { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .tab-button { justify-content: center; }
 }

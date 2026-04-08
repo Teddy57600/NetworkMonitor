@@ -47,6 +47,7 @@ sealed class DashboardMonitorSnapshot
     public string Key { get; init; } = string.Empty;
     public string Type { get; init; } = string.Empty;
     public string DisplayName { get; init; } = string.Empty;
+    public string? HostName { get; init; }
     public string Source { get; init; } = string.Empty;
     public string Status { get; init; } = string.Empty;
     public bool IsDown { get; init; }

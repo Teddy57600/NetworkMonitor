@@ -14,6 +14,234 @@ let lastDashboardData = {
     httpMonitors: [],
     dnsMonitors: []
 };
+const multiSelectFilters = new Map();
+
+function registerMultiSelectFilter(config) {
+    const container = document.getElementById(config.id);
+    if (!container) {
+        return;
+    }
+
+    container.innerHTML = '';
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'multiselect-filter-button';
+    button.textContent = config.placeholder;
+
+    const panel = document.createElement('div');
+    panel.className = 'multiselect-filter-panel';
+    document.body.appendChild(panel);
+
+    container.append(button);
+    multiSelectFilters.set(config.id, {
+        ...config,
+        container,
+        button,
+        panel,
+        options: []
+    });
+
+    button.addEventListener('click', () => {
+        const isOpen = !panel.classList.contains('open');
+        closeOtherMultiSelectFilters(config.id);
+        if (isOpen) {
+            positionMultiSelectPanel(config.id);
+            panel.classList.add('open');
+            container.classList.add('open');
+        }
+        else {
+            panel.classList.remove('open');
+            container.classList.remove('open');
+        }
+    });
+}
+
+function positionMultiSelectPanel(filterId) {
+    const filter = multiSelectFilters.get(filterId);
+    if (!filter) {
+        return;
+    }
+
+    const rect = filter.button.getBoundingClientRect();
+    const panelWidth = Math.max(rect.width, 220);
+    const left = Math.max(8, Math.min(rect.left, window.innerWidth - panelWidth - 8));
+    filter.panel.style.top = `${rect.bottom + 6}px`;
+    filter.panel.style.left = `${left}px`;
+    filter.panel.style.width = `${panelWidth}px`;
+}
+
+function repositionOpenMultiSelectPanels() {
+    multiSelectFilters.forEach((filter, id) => {
+        if (filter.panel.classList.contains('open')) {
+            positionMultiSelectPanel(id);
+        }
+    });
+}
+
+function closeOtherMultiSelectFilters(exceptId = null) {
+    multiSelectFilters.forEach((filter, id) => {
+        if (id !== exceptId) {
+            filter.panel.classList.remove('open');
+            filter.container.classList.remove('open');
+        }
+    });
+}
+
+function setMultiSelectOptions(filterId, options) {
+    const filter = multiSelectFilters.get(filterId);
+    if (!filter) {
+        return;
+    }
+
+    const previousSelection = new Set(filter.options.filter(option => option.selected).map(option => option.value));
+    filter.options = options.map(option => ({
+        ...option,
+        selected: previousSelection.size === 0 ? option.selected ?? false : previousSelection.has(option.value)
+    }));
+
+    filter.panel.innerHTML = '';
+
+    filter.options.forEach(option => {
+        const label = document.createElement('label');
+        label.className = 'multiselect-option';
+
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.value = option.value;
+        checkbox.checked = option.selected;
+        checkbox.addEventListener('change', () => {
+            option.selected = checkbox.checked;
+            updateMultiSelectLabel(filterId);
+            filter.onChange?.();
+        });
+
+        const text = document.createElement('span');
+        text.textContent = option.label;
+        label.append(checkbox, text);
+        filter.panel.appendChild(label);
+    });
+
+    updateMultiSelectLabel(filterId);
+}
+
+function updateMultiSelectLabel(filterId) {
+    const filter = multiSelectFilters.get(filterId);
+    if (!filter) {
+        return;
+    }
+
+    const selected = filter.options.filter(option => option.selected);
+    if (selected.length === 0 || selected.length === filter.options.length) {
+        filter.button.textContent = filter.placeholder;
+        return;
+    }
+
+    if (selected.length === 1) {
+        filter.button.textContent = selected[0].label;
+        return;
+    }
+
+    filter.button.textContent = `${selected.length} sélectionnés`;
+}
+
+function getSelectedMultiSelectValues(filterId) {
+    const filter = multiSelectFilters.get(filterId);
+    if (!filter) {
+        return [];
+    }
+
+    const selectedValues = filter.options.filter(option => option.selected).map(option => option.value);
+    return selectedValues.length === filter.options.length ? [] : selectedValues;
+}
+
+function buildOptionLabel(name, count) {
+    return `${name} (${count})`;
+}
+
+function countBy(items, selector) {
+    const counts = new Map();
+    (items ?? []).forEach(item => {
+        const key = selector(item);
+        counts.set(key, (counts.get(key) ?? 0) + 1);
+    });
+    return counts;
+}
+
+function updateMonitorFilterOptions() {
+    const allMonitors = [
+        ...lastDashboardData.pingMonitors,
+        ...lastDashboardData.tcpMonitors,
+        ...lastDashboardData.httpMonitors,
+        ...lastDashboardData.dnsMonitors
+    ];
+
+    const statusCounts = new Map([
+        ['down', allMonitors.filter(monitor => monitor.isDown).length],
+        ['up', allMonitors.filter(monitor => !monitor.isDown).length],
+        ['snoozed', allMonitors.filter(monitor => !!monitor.snoozeUntil).length]
+    ]);
+    setMultiSelectOptions('monitorStatusFilter', [
+        { value: 'down', label: buildOptionLabel('DOWN', statusCounts.get('down') ?? 0) },
+        { value: 'up', label: buildOptionLabel('UP', statusCounts.get('up') ?? 0) },
+        { value: 'snoozed', label: buildOptionLabel('Snoozés', statusCounts.get('snoozed') ?? 0) }
+    ]);
+
+    const sourceCounts = countBy(allMonitors, monitor => monitor.source);
+    setMultiSelectOptions('monitorSourceFilter', [
+        { value: 'ENV', label: buildOptionLabel('ENV', sourceCounts.get('ENV') ?? 0) },
+        { value: 'YAML', label: buildOptionLabel('YAML', sourceCounts.get('YAML') ?? 0) },
+        { value: 'ENV + YAML', label: buildOptionLabel('ENV + YAML', sourceCounts.get('ENV + YAML') ?? 0) }
+    ]);
+
+    const typeCounts = countBy(allMonitors, monitor => monitor.type);
+    setMultiSelectOptions('monitorTypeFilter', [
+        { value: 'Ping', label: buildOptionLabel('Ping', typeCounts.get('Ping') ?? 0) },
+        { value: 'TCP', label: buildOptionLabel('TCP', typeCounts.get('TCP') ?? 0) },
+        { value: 'HTTP', label: buildOptionLabel('HTTP', typeCounts.get('HTTP') ?? 0) },
+        { value: 'DNS', label: buildOptionLabel('DNS', typeCounts.get('DNS') ?? 0) }
+    ]);
+}
+
+function updateIncidentFilterOptions() {
+    const statusCounts = new Map([
+        ['open', lastIncidents.filter(incident => incident.isOpen).length],
+        ['resolved', lastIncidents.filter(incident => !incident.isOpen).length]
+    ]);
+    setMultiSelectOptions('incidentStatusFilter', [
+        { value: 'open', label: buildOptionLabel('En cours', statusCounts.get('open') ?? 0) },
+        { value: 'resolved', label: buildOptionLabel('Résolus', statusCounts.get('resolved') ?? 0) }
+    ]);
+
+    const typeCounts = countBy(lastIncidents, incident => incident.type);
+    setMultiSelectOptions('incidentTypeFilter', [
+        { value: 'Ping', label: buildOptionLabel('Ping', typeCounts.get('Ping') ?? 0) },
+        { value: 'TCP', label: buildOptionLabel('TCP', typeCounts.get('TCP') ?? 0) },
+        { value: 'HTTP', label: buildOptionLabel('HTTP', typeCounts.get('HTTP') ?? 0) },
+        { value: 'DNS', label: buildOptionLabel('DNS', typeCounts.get('DNS') ?? 0) }
+    ]);
+}
+
+function initializeMultiSelectFilters() {
+    registerMultiSelectFilter({ id: 'monitorStatusFilter', placeholder: 'Tous', onChange: rerenderMonitorLists });
+    registerMultiSelectFilter({ id: 'monitorSourceFilter', placeholder: 'Toutes', onChange: rerenderMonitorLists });
+    registerMultiSelectFilter({ id: 'monitorTypeFilter', placeholder: 'Tous', onChange: rerenderMonitorLists });
+    registerMultiSelectFilter({ id: 'incidentStatusFilter', placeholder: 'Tous', onChange: () => renderIncidentList('incidentHistory', lastIncidents) });
+    registerMultiSelectFilter({ id: 'incidentTypeFilter', placeholder: 'Tous', onChange: () => renderIncidentList('incidentHistory', lastIncidents) });
+
+    document.addEventListener('click', event => {
+        if (!(event.target instanceof Node)) {
+            return;
+        }
+
+        const clickedInsideFilter = Array.from(multiSelectFilters.values()).some(filter => filter.container.contains(event.target) || filter.panel.contains(event.target));
+        if (!clickedInsideFilter) {
+            closeOtherMultiSelectFilters();
+        }
+    });
+
+    window.addEventListener('resize', repositionOpenMultiSelectPanels);
+    document.addEventListener('scroll', repositionOpenMultiSelectPanels, true);
+}
 
 function formatRefreshIntervalLabel(milliseconds) {
     const totalSeconds = Math.max(1, Math.round(milliseconds / 1000));
@@ -56,8 +284,8 @@ function updateRefreshIntervalDisplay() {
 
 function getIncidentFilters() {
     return {
-        status: document.getElementById('incidentStatusFilter')?.value ?? 'all',
-        type: document.getElementById('incidentTypeFilter')?.value ?? 'all',
+        statuses: getSelectedMultiSelectValues('incidentStatusFilter'),
+        types: getSelectedMultiSelectValues('incidentTypeFilter'),
         search: document.getElementById('incidentSearchInput')?.value.trim().toLowerCase() ?? ''
     };
 }
@@ -66,15 +294,14 @@ function filterIncidents(incidents) {
     const filters = getIncidentFilters();
 
     return incidents.filter(incident => {
-        if (filters.status === 'open' && !incident.isOpen) {
-            return false;
+        if (filters.statuses.length > 0) {
+            const incidentStatus = incident.isOpen ? 'open' : 'resolved';
+            if (!filters.statuses.includes(incidentStatus)) {
+                return false;
+            }
         }
 
-        if (filters.status === 'resolved' && incident.isOpen) {
-            return false;
-        }
-
-        if (filters.type !== 'all' && incident.type !== filters.type) {
+        if (filters.types.length > 0 && !filters.types.includes(incident.type)) {
             return false;
         }
 
@@ -92,6 +319,26 @@ function rerenderMonitorLists() {
     renderMonitorList('tcpMonitors', lastDashboardData.tcpMonitors);
     renderMonitorList('httpMonitors', lastDashboardData.httpMonitors);
     renderMonitorList('dnsMonitors', lastDashboardData.dnsMonitors);
+}
+
+function initializeTabs() {
+    const buttons = document.querySelectorAll('.tab-button');
+    const panels = document.querySelectorAll('.tab-panel');
+
+    buttons.forEach(button => {
+        button.addEventListener('click', () => {
+            const targetId = button.dataset.tabTarget;
+            if (!targetId) {
+                return;
+            }
+
+            buttons.forEach(item => item.classList.remove('active'));
+            panels.forEach(panel => panel.classList.remove('active'));
+
+            button.classList.add('active');
+            document.getElementById(targetId)?.classList.add('active');
+        });
+    });
 }
 
 function updateIncidentFilterSummary(visibleCount, totalCount) {
@@ -699,11 +946,20 @@ async function addTcpTarget(event) {
 
 function getMonitorFilters() {
     return {
-        status: document.getElementById('monitorStatusFilter')?.value ?? 'all',
-        source: document.getElementById('monitorSourceFilter')?.value ?? 'all',
+        statuses: getSelectedMultiSelectValues('monitorStatusFilter'),
+        sources: getSelectedMultiSelectValues('monitorSourceFilter'),
+        types: getSelectedMultiSelectValues('monitorTypeFilter'),
         sort: document.getElementById('monitorSortSelect')?.value ?? 'state',
         search: document.getElementById('monitorSearchInput')?.value.trim().toLowerCase() ?? ''
     };
+}
+
+function hasActiveMonitorFilters() {
+    const filters = getMonitorFilters();
+    return filters.statuses.length > 0
+        || filters.sources.length > 0
+        || filters.types.length > 0
+        || filters.search.length > 0;
 }
 
 function getDowntimeValue(monitor) {
@@ -733,19 +989,22 @@ function compareMonitorState(left, right) {
 function applyMonitorFiltersAndSort(monitors) {
     const filters = getMonitorFilters();
     const filtered = (monitors ?? []).filter(monitor => {
-        if (filters.status === 'down' && !monitor.isDown) {
+        if (filters.statuses.length > 0) {
+            const monitorStatuses = [monitor.isDown ? 'down' : 'up'];
+            if (monitor.snoozeUntil) {
+                monitorStatuses.push('snoozed');
+            }
+
+            if (!filters.statuses.some(status => monitorStatuses.includes(status))) {
+                return false;
+            }
+        }
+
+        if (filters.sources.length > 0 && !filters.sources.includes(monitor.source)) {
             return false;
         }
 
-        if (filters.status === 'up' && monitor.isDown) {
-            return false;
-        }
-
-        if (filters.status === 'snoozed' && !monitor.snoozeUntil) {
-            return false;
-        }
-
-        if (filters.source !== 'all' && monitor.source !== filters.source) {
+        if (filters.types.length > 0 && !filters.types.includes(monitor.type)) {
             return false;
         }
 
@@ -866,9 +1125,19 @@ async function importConfigFile(event) {
 
 function renderMonitorList(containerId, monitors) {
     const container = document.getElementById(containerId);
+    const panel = container.closest('.panel');
     container.innerHTML = '';
 
     const visibleMonitors = applyMonitorFiltersAndSort(monitors ?? []);
+    const shouldHidePanel = visibleMonitors.length === 0 && hasActiveMonitorFilters();
+
+    if (panel) {
+        panel.hidden = shouldHidePanel;
+    }
+
+    if (shouldHidePanel) {
+        return;
+    }
 
     if (!visibleMonitors.length) {
         const emptyState = document.createElement('div');
@@ -948,6 +1217,7 @@ function renderMonitorList(containerId, monitors) {
 
         const meta = node.querySelector('.monitor-meta');
         const rows = [
+            ...(monitor.type === 'DNS' && monitor.hostName ? [['Nom d’hôte', monitor.hostName]] : []),
             ['Source', createSourceBadge(monitor.source)],
             ['Dernier contrôle', formatDate(monitor.lastCheckAt)],
             ['Dernier succès', formatDate(monitor.lastSuccessAt)],
@@ -1015,8 +1285,10 @@ async function refresh() {
             httpMonitors: data.httpMonitors ?? [],
             dnsMonitors: data.dnsMonitors ?? []
         };
+        updateMonitorFilterOptions();
         rerenderMonitorLists();
         lastIncidents = data.recentIncidents ?? [];
+        updateIncidentFilterOptions();
         renderIncidentList('incidentHistory', lastIncidents);
 
         if (!hasLoadedConfigEditor) {
@@ -1043,14 +1315,12 @@ document.getElementById('refreshIntervalSelect').addEventListener('change', even
     updateRefreshIntervalDisplay();
     scheduleNextRefresh();
 });
-document.getElementById('incidentStatusFilter').addEventListener('change', () => renderIncidentList('incidentHistory', lastIncidents));
-document.getElementById('incidentTypeFilter').addEventListener('change', () => renderIncidentList('incidentHistory', lastIncidents));
 document.getElementById('incidentSearchInput').addEventListener('input', () => renderIncidentList('incidentHistory', lastIncidents));
 document.getElementById('saveConfigButton').addEventListener('click', saveConfigEditor);
 document.getElementById('reloadConfigButton').addEventListener('click', loadConfigEditor);
 document.getElementById('configImportInput').addEventListener('change', importConfigFile);
-document.getElementById('monitorStatusFilter').addEventListener('change', rerenderMonitorLists);
-document.getElementById('monitorSourceFilter').addEventListener('change', rerenderMonitorLists);
 document.getElementById('monitorSortSelect').addEventListener('change', rerenderMonitorLists);
 document.getElementById('monitorSearchInput').addEventListener('input', rerenderMonitorLists);
+initializeMultiSelectFilters();
+initializeTabs();
 refresh();
