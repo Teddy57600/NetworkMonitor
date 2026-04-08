@@ -7,6 +7,13 @@ let serverRefreshIntervalMs = 5000;
 let defaultSnoozeDays = 1;
 let lastSummary = null;
 let lastIncidents = [];
+let hasLoadedConfigEditor = false;
+let lastDashboardData = {
+    pingMonitors: [],
+    tcpMonitors: [],
+    httpMonitors: [],
+    dnsMonitors: []
+};
 
 function formatRefreshIntervalLabel(milliseconds) {
     const totalSeconds = Math.max(1, Math.round(milliseconds / 1000));
@@ -78,6 +85,13 @@ function filterIncidents(incidents) {
         const haystack = `${incident.displayName} ${incident.key} ${incident.type}`.toLowerCase();
         return haystack.includes(filters.search);
     });
+}
+
+function rerenderMonitorLists() {
+    renderMonitorList('pingMonitors', lastDashboardData.pingMonitors);
+    renderMonitorList('tcpMonitors', lastDashboardData.tcpMonitors);
+    renderMonitorList('httpMonitors', lastDashboardData.httpMonitors);
+    renderMonitorList('dnsMonitors', lastDashboardData.dnsMonitors);
 }
 
 function updateIncidentFilterSummary(visibleCount, totalCount) {
@@ -319,6 +333,170 @@ async function requestImmediateCheck() {
     }
 }
 
+async function removeHttpTarget(url, button) {
+    if (!window.confirm(`Supprimer le test HTTP '${url}' du fichier YAML ?`)) {
+        return;
+    }
+
+    button.disabled = true;
+    setActionStatus(`Suppression du test HTTP ${url}...`);
+
+    try {
+        const payload = await postAction(`/api/actions/remove-http?url=${encodeURIComponent(url)}`);
+        setActionStatus(payload.message);
+        await refresh();
+    }
+    catch (error) {
+        setActionStatus(`Échec de la suppression du test HTTP : ${error.message}`, true);
+    }
+    finally {
+        button.disabled = false;
+    }
+}
+
+async function removeDnsTarget(host, button) {
+    if (!window.confirm(`Supprimer le test DNS '${host}' du fichier YAML ?`)) {
+        return;
+    }
+
+    button.disabled = true;
+    setActionStatus(`Suppression du test DNS ${host}...`);
+
+    try {
+        const payload = await postAction(`/api/actions/remove-dns?host=${encodeURIComponent(host)}`);
+        setActionStatus(payload.message);
+        await refresh();
+    }
+    catch (error) {
+        setActionStatus(`Échec de la suppression du test DNS : ${error.message}`, true);
+    }
+    finally {
+        button.disabled = false;
+    }
+}
+
+async function removeDnsReverseTarget(ip, button) {
+    if (!window.confirm(`Supprimer le reverse DNS '${ip}' du fichier YAML ?`)) {
+        return;
+    }
+
+    button.disabled = true;
+    setActionStatus(`Suppression du reverse DNS ${ip}...`);
+
+    try {
+        const payload = await postAction(`/api/actions/remove-dns-reverse?ip=${encodeURIComponent(ip)}`);
+        setActionStatus(payload.message);
+        await refresh();
+    }
+    catch (error) {
+        setActionStatus(`Échec de la suppression du reverse DNS : ${error.message}`, true);
+    }
+    finally {
+        button.disabled = false;
+    }
+}
+
+async function addHttpTarget(event) {
+    event.preventDefault();
+
+    const form = event.currentTarget;
+    const button = form.querySelector('button[type="submit"]');
+    const url = document.getElementById('httpUrlInput').value.trim();
+    const expectedStatusCodeRaw = document.getElementById('httpStatusCodeInput').value.trim();
+    const containsText = document.getElementById('httpContainsTextInput').value.trim();
+
+    if (!url) {
+        setActionStatus('L’URL HTTP/HTTPS est obligatoire.', true);
+        return;
+    }
+
+    const expectedStatusCode = expectedStatusCodeRaw ? Number(expectedStatusCodeRaw) : null;
+    if (expectedStatusCodeRaw && (!Number.isInteger(expectedStatusCode) || expectedStatusCode < 100 || expectedStatusCode > 599)) {
+        setActionStatus('Le code HTTP attendu doit être compris entre 100 et 599.', true);
+        return;
+    }
+
+    button.disabled = true;
+    setActionStatus(`Ajout du test HTTP ${url}...`);
+
+    try {
+        const statusQuery = expectedStatusCode === null ? '' : `&expectedStatusCode=${expectedStatusCode}`;
+        const textQuery = containsText ? `&containsText=${encodeURIComponent(containsText)}` : '';
+        const payload = await postAction(`/api/actions/add-http?url=${encodeURIComponent(url)}${statusQuery}${textQuery}`);
+        setActionStatus(payload.message);
+        form.reset();
+        await refresh();
+    }
+    catch (error) {
+        setActionStatus(`Échec de l'ajout du test HTTP : ${error.message}`, true);
+    }
+    finally {
+        button.disabled = false;
+    }
+}
+
+async function addDnsTarget(event) {
+    event.preventDefault();
+
+    const form = event.currentTarget;
+    const button = form.querySelector('button[type="submit"]');
+    const host = document.getElementById('dnsHostInput').value.trim();
+    const expectedAddress = document.getElementById('dnsExpectedAddressInput').value.trim();
+
+    if (!host) {
+        setActionStatus('Le nom de domaine est obligatoire.', true);
+        return;
+    }
+
+    button.disabled = true;
+    setActionStatus(`Ajout du test DNS ${host}...`);
+
+    try {
+        const addressQuery = expectedAddress ? `&expectedAddress=${encodeURIComponent(expectedAddress)}` : '';
+        const payload = await postAction(`/api/actions/add-dns?host=${encodeURIComponent(host)}${addressQuery}`);
+        setActionStatus(payload.message);
+        form.reset();
+        await refresh();
+    }
+    catch (error) {
+        setActionStatus(`Échec de l'ajout du test DNS : ${error.message}`, true);
+    }
+    finally {
+        button.disabled = false;
+    }
+}
+
+async function addDnsReverseTarget(event) {
+    event.preventDefault();
+
+    const form = event.currentTarget;
+    const button = form.querySelector('button[type="submit"]');
+    const ip = document.getElementById('dnsReverseIpInput').value.trim();
+    const expectedHost = document.getElementById('dnsExpectedHostInput').value.trim();
+
+    if (!ip) {
+        setActionStatus('L’adresse IP du reverse DNS est obligatoire.', true);
+        return;
+    }
+
+    button.disabled = true;
+    setActionStatus(`Ajout du reverse DNS ${ip}...`);
+
+    try {
+        const hostQuery = expectedHost ? `&expectedHost=${encodeURIComponent(expectedHost)}` : '';
+        const payload = await postAction(`/api/actions/add-dns-reverse?ip=${encodeURIComponent(ip)}${hostQuery}`);
+        setActionStatus(payload.message);
+        form.reset();
+        await refresh();
+    }
+    catch (error) {
+        setActionStatus(`Échec de l'ajout du reverse DNS : ${error.message}`, true);
+    }
+    finally {
+        button.disabled = false;
+    }
+}
+
 function renderIncidentList(containerId, incidents) {
     const container = document.getElementById(containerId);
     container.innerHTML = '';
@@ -519,21 +697,192 @@ async function addTcpTarget(event) {
     }
 }
 
+function getMonitorFilters() {
+    return {
+        status: document.getElementById('monitorStatusFilter')?.value ?? 'all',
+        source: document.getElementById('monitorSourceFilter')?.value ?? 'all',
+        sort: document.getElementById('monitorSortSelect')?.value ?? 'state',
+        search: document.getElementById('monitorSearchInput')?.value.trim().toLowerCase() ?? ''
+    };
+}
+
+function getDowntimeValue(monitor) {
+    if (!monitor.downSince) {
+        return -1;
+    }
+
+    return Date.now() - new Date(monitor.downSince).getTime();
+}
+
+function compareMonitorState(left, right) {
+    const getRank = monitor => {
+        if (monitor.isDown) {
+            return 0;
+        }
+
+        if (monitor.snoozeUntil) {
+            return 1;
+        }
+
+        return 2;
+    };
+
+    return getRank(left) - getRank(right);
+}
+
+function applyMonitorFiltersAndSort(monitors) {
+    const filters = getMonitorFilters();
+    const filtered = (monitors ?? []).filter(monitor => {
+        if (filters.status === 'down' && !monitor.isDown) {
+            return false;
+        }
+
+        if (filters.status === 'up' && monitor.isDown) {
+            return false;
+        }
+
+        if (filters.status === 'snoozed' && !monitor.snoozeUntil) {
+            return false;
+        }
+
+        if (filters.source !== 'all' && monitor.source !== filters.source) {
+            return false;
+        }
+
+        if (!filters.search) {
+            return true;
+        }
+
+        const haystack = `${monitor.displayName} ${monitor.type} ${monitor.source}`.toLowerCase();
+        return haystack.includes(filters.search);
+    });
+
+    filtered.sort((left, right) => {
+        switch (filters.sort) {
+            case 'name':
+                return left.displayName.localeCompare(right.displayName, 'fr', { sensitivity: 'base' });
+            case 'downtime':
+                return getDowntimeValue(right) - getDowntimeValue(left)
+                    || left.displayName.localeCompare(right.displayName, 'fr', { sensitivity: 'base' });
+            case 'source':
+                return left.source.localeCompare(right.source, 'fr', { sensitivity: 'base' })
+                    || left.displayName.localeCompare(right.displayName, 'fr', { sensitivity: 'base' });
+            case 'state':
+            default:
+                return compareMonitorState(left, right)
+                    || left.displayName.localeCompare(right.displayName, 'fr', { sensitivity: 'base' });
+        }
+    });
+
+    return filtered;
+}
+
+async function loadConfigEditor() {
+    const editor = document.getElementById('configEditor');
+    const pathBadge = document.getElementById('configPathDisplay');
+
+    try {
+        const response = await fetch('/api/config/raw', { cache: 'no-store' });
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+        }
+
+        const payload = await response.json();
+        editor.value = payload.content ?? '';
+        pathBadge.textContent = payload.path ?? '—';
+        hasLoadedConfigEditor = true;
+    }
+    catch (error) {
+        setActionStatus(`Échec du chargement de la configuration : ${error.message}`, true);
+    }
+}
+
+async function saveConfigEditor() {
+    const button = document.getElementById('saveConfigButton');
+    const editor = document.getElementById('configEditor');
+    button.disabled = true;
+    setActionStatus('Enregistrement de la configuration YAML...');
+
+    try {
+        const formData = new FormData();
+        formData.append('content', editor.value ?? '');
+
+        const response = await fetch('/api/config/raw', {
+            method: 'POST',
+            body: formData
+        });
+
+        const payload = await response.json();
+        if (!response.ok || payload.success === false) {
+            throw new Error(payload.message ?? `HTTP ${response.status}`);
+        }
+
+        setActionStatus(payload.message);
+        await loadConfigEditor();
+        await refresh();
+    }
+    catch (error) {
+        setActionStatus(`Échec de l'enregistrement du YAML : ${error.message}`, true);
+    }
+    finally {
+        button.disabled = false;
+    }
+}
+
+async function importConfigFile(event) {
+    const input = event.currentTarget;
+    const file = input.files?.[0];
+    if (!file) {
+        return;
+    }
+
+    setActionStatus(`Import du fichier ${file.name}...`);
+
+    try {
+        const formData = new FormData();
+        formData.append('configFile', file);
+
+        const response = await fetch('/api/config/import', {
+            method: 'POST',
+            body: formData
+        });
+
+        const payload = await response.json();
+        if (!response.ok || payload.success === false) {
+            throw new Error(payload.message ?? `HTTP ${response.status}`);
+        }
+
+        setActionStatus(payload.message);
+        await loadConfigEditor();
+        await refresh();
+    }
+    catch (error) {
+        setActionStatus(`Échec de l'import du YAML : ${error.message}`, true);
+    }
+    finally {
+        input.value = '';
+    }
+}
+
 function renderMonitorList(containerId, monitors) {
     const container = document.getElementById(containerId);
     container.innerHTML = '';
 
-    if (!monitors || monitors.length === 0) {
+    const visibleMonitors = applyMonitorFiltersAndSort(monitors ?? []);
+
+    if (!visibleMonitors.length) {
         const emptyState = document.createElement('div');
         emptyState.className = 'empty-state';
-        emptyState.textContent = 'Aucun moniteur configuré.';
+        emptyState.textContent = (monitors?.length ?? 0) > 0
+            ? 'Aucun moniteur ne correspond aux filtres.'
+            : 'Aucun moniteur configuré.';
         container.appendChild(emptyState);
         return;
     }
 
     const template = document.getElementById('monitor-template');
 
-    monitors.forEach((monitor) => {
+    visibleMonitors.forEach((monitor) => {
         const node = template.content.firstElementChild.cloneNode(true);
         node.querySelector('.monitor-type').textContent = monitor.type;
         node.querySelector('.monitor-name').textContent = monitor.displayName;
@@ -561,10 +910,25 @@ function renderMonitorList(containerId, monitors) {
             const removeButton = document.createElement('button');
             removeButton.type = 'button';
             removeButton.className = 'action-button danger';
-            removeButton.textContent = monitor.type === 'TCP' ? 'Supprimer le test' : 'Supprimer la cible';
+            removeButton.textContent = monitor.type === 'Ping' ? 'Supprimer la cible' : 'Supprimer le test';
             removeButton.addEventListener('click', () => {
                 if (monitor.type === 'TCP') {
                     removeTcpTarget(monitor.key, removeButton);
+                    return;
+                }
+
+                if (monitor.type === 'HTTP') {
+                    removeHttpTarget(monitor.displayName, removeButton);
+                    return;
+                }
+
+                if (monitor.type === 'DNS') {
+                    if (monitor.key.startsWith('DNS:PTR:')) {
+                        removeDnsReverseTarget(monitor.key.substring('DNS:PTR:'.length), removeButton);
+                        return;
+                    }
+
+                    removeDnsTarget(monitor.displayName, removeButton);
                     return;
                 }
 
@@ -643,11 +1007,21 @@ async function refresh() {
         setText('configVersion', data.configVersion);
         setText('startedAt', formatDate(data.startedAt));
         updateRefreshIntervalDisplay();
+        document.getElementById('configPathDisplay').textContent = data.configPath ?? '—';
 
-        renderMonitorList('pingMonitors', data.pingMonitors);
-        renderMonitorList('tcpMonitors', data.tcpMonitors);
+        lastDashboardData = {
+            pingMonitors: data.pingMonitors ?? [],
+            tcpMonitors: data.tcpMonitors ?? [],
+            httpMonitors: data.httpMonitors ?? [],
+            dnsMonitors: data.dnsMonitors ?? []
+        };
+        rerenderMonitorLists();
         lastIncidents = data.recentIncidents ?? [];
         renderIncidentList('incidentHistory', lastIncidents);
+
+        if (!hasLoadedConfigEditor) {
+            await loadConfigEditor();
+        }
     }
     catch (error) {
         setText('subtitle', `Erreur de chargement du tableau de bord : ${error.message}`);
@@ -660,6 +1034,9 @@ async function refresh() {
 document.getElementById('checkNowButton').addEventListener('click', requestImmediateCheck);
 document.getElementById('pingTargetForm').addEventListener('submit', addPingTarget);
 document.getElementById('tcpTargetForm').addEventListener('submit', addTcpTarget);
+document.getElementById('httpTargetForm').addEventListener('submit', addHttpTarget);
+document.getElementById('dnsTargetForm').addEventListener('submit', addDnsTarget);
+document.getElementById('dnsReverseTargetForm').addEventListener('submit', addDnsReverseTarget);
 document.getElementById('refreshIntervalSelect').addEventListener('change', event => {
     localStorage.setItem(refreshIntervalStorageKey, event.currentTarget.value);
     applyRefreshIntervalPreference();
@@ -669,5 +1046,11 @@ document.getElementById('refreshIntervalSelect').addEventListener('change', even
 document.getElementById('incidentStatusFilter').addEventListener('change', () => renderIncidentList('incidentHistory', lastIncidents));
 document.getElementById('incidentTypeFilter').addEventListener('change', () => renderIncidentList('incidentHistory', lastIncidents));
 document.getElementById('incidentSearchInput').addEventListener('input', () => renderIncidentList('incidentHistory', lastIncidents));
-document.addEventListener('networkmonitor:theme-changed', () => updatePageChrome(lastSummary));
+document.getElementById('saveConfigButton').addEventListener('click', saveConfigEditor);
+document.getElementById('reloadConfigButton').addEventListener('click', loadConfigEditor);
+document.getElementById('configImportInput').addEventListener('change', importConfigFile);
+document.getElementById('monitorStatusFilter').addEventListener('change', rerenderMonitorLists);
+document.getElementById('monitorSourceFilter').addEventListener('change', rerenderMonitorLists);
+document.getElementById('monitorSortSelect').addEventListener('change', rerenderMonitorLists);
+document.getElementById('monitorSearchInput').addEventListener('input', rerenderMonitorLists);
 refresh();

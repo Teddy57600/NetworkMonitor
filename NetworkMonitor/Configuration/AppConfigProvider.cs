@@ -16,15 +16,33 @@ sealed class AppConfig
     public bool DashboardAuthEnabled { get; init; }
     public string DashboardAuthUsername { get; init; } = string.Empty;
     public string DashboardAuthPasswordHash { get; init; } = string.Empty;
+    public int DashboardSessionHours { get; init; } = 12;
     public int DashboardRefreshSeconds { get; init; } = 5;
     public IReadOnlyList<string> PingTargets { get; init; } = [];
     public IReadOnlyList<TcpTargetConfig> TcpTargets { get; init; } = [];
+    public IReadOnlyList<HttpTargetConfig> HttpTargets { get; init; } = [];
+    public IReadOnlyList<DnsTargetConfig> DnsTargets { get; init; } = [];
 }
 
 sealed class TcpTargetConfig
 {
     public string Host { get; init; } = string.Empty;
     public int Port { get; init; }
+}
+
+sealed class HttpTargetConfig
+{
+    public string Url { get; init; } = string.Empty;
+    public int? ExpectedStatusCode { get; init; }
+    public string? ContainsText { get; init; }
+}
+
+sealed class DnsTargetConfig
+{
+    public string Host { get; init; } = string.Empty;
+    public string? ExpectedAddress { get; init; }
+    public string? ReverseLookupIp { get; init; }
+    public string? ExpectedHost { get; init; }
 }
 
 sealed class ConfigMutationResult
@@ -127,6 +145,38 @@ static class AppConfigProvider
             : WatcherFallbackPollingInterval;
 
         return _changeSignal.WaitAsync(delay, ct);
+    }
+
+    public static string GetRawConfigContent()
+    {
+        var path = ConfigPath;
+        if (File.Exists(path))
+            return File.ReadAllText(path);
+
+        lock (_lock)
+            return BuildYamlContent(_yamlConfig);
+    }
+
+    public static ConfigMutationResult ReplaceRawConfig(string content)
+    {
+        try
+        {
+            var normalizedContent = content?.Replace("\r\n", "\n") ?? string.Empty;
+            var parsed = string.IsNullOrWhiteSpace(normalizedContent)
+                ? new YamlAppConfig()
+                : ParseYaml(normalizedContent);
+
+            lock (_lock)
+                return SaveYamlConfig(parsed, "La configuration YAML a été mise à jour.");
+        }
+        catch (Exception ex)
+        {
+            return new ConfigMutationResult
+            {
+                Success = false,
+                Message = $"Configuration YAML invalide : {ex.Message}"
+            };
+        }
     }
 
     public static ConfigMutationResult AddPingTarget(string target)
@@ -240,12 +290,153 @@ static class AppConfigProvider
         }
     }
 
+    public static ConfigMutationResult AddHttpTarget(string url, int? expectedStatusCode, string? containsText)
+    {
+        url = url.Trim();
+        containsText = string.IsNullOrWhiteSpace(containsText) ? null : containsText.Trim();
+
+        if (!Uri.TryCreate(url, UriKind.Absolute, out _))
+        {
+            return new ConfigMutationResult
+            {
+                Success = false,
+                Message = "Une URL HTTP/HTTPS absolue valide est obligatoire."
+            };
+        }
+
+        if (expectedStatusCode is <= 0)
+            expectedStatusCode = null;
+
+        lock (_lock)
+        {
+            if (BuildEffectiveConfig(_yamlConfig).HttpTargets.Any(target => string.Equals(target.Url, url, StringComparison.OrdinalIgnoreCase)))
+            {
+                return new ConfigMutationResult
+                {
+                    Success = true,
+                    Message = $"L'endpoint HTTP '{url}' est déjà monitoré."
+                };
+            }
+
+            var updated = CloneYamlConfig(_yamlConfig);
+            updated.HttpTargets = NormalizeHttpTargets([
+                .. (updated.HttpTargets ?? []),
+                new HttpTargetConfig
+                {
+                    Url = url,
+                    ExpectedStatusCode = expectedStatusCode,
+                    ContainsText = containsText
+                }
+            ]).ToList();
+
+            return SaveYamlConfig(updated, $"L'endpoint HTTP '{url}' a été ajouté au fichier YAML.");
+        }
+    }
+
+    public static ConfigMutationResult AddDnsTarget(string host, string? expectedAddress)
+    {
+        host = host.Trim();
+        expectedAddress = string.IsNullOrWhiteSpace(expectedAddress) ? null : expectedAddress.Trim();
+
+        if (string.IsNullOrWhiteSpace(host))
+        {
+            return new ConfigMutationResult
+            {
+                Success = false,
+                Message = "L'hôte DNS est obligatoire."
+            };
+        }
+
+        lock (_lock)
+        {
+            if (BuildEffectiveConfig(_yamlConfig).DnsTargets.Any(target => string.Equals(target.Host, host, StringComparison.OrdinalIgnoreCase) && string.IsNullOrWhiteSpace(target.ReverseLookupIp)))
+            {
+                return new ConfigMutationResult
+                {
+                    Success = true,
+                    Message = $"La cible DNS '{host}' est déjà monitorée."
+                };
+            }
+
+            var updated = CloneYamlConfig(_yamlConfig);
+            updated.DnsTargets = NormalizeDnsTargets([
+                .. (updated.DnsTargets ?? []),
+                new DnsTargetConfig
+                {
+                    Host = host,
+                    ExpectedAddress = expectedAddress
+                }
+            ]).ToList();
+
+            return SaveYamlConfig(updated, $"La cible DNS '{host}' a été ajoutée au fichier YAML.");
+        }
+    }
+
+    public static ConfigMutationResult AddDnsReverseTarget(string ip, string? expectedHost)
+    {
+        ip = ip.Trim();
+        expectedHost = string.IsNullOrWhiteSpace(expectedHost) ? null : expectedHost.Trim();
+
+        if (!System.Net.IPAddress.TryParse(ip, out _))
+        {
+            return new ConfigMutationResult
+            {
+                Success = false,
+                Message = "Une adresse IP valide est obligatoire pour le reverse DNS."
+            };
+        }
+
+        lock (_lock)
+        {
+            if (BuildEffectiveConfig(_yamlConfig).DnsTargets.Any(target => string.Equals(target.ReverseLookupIp, ip, StringComparison.OrdinalIgnoreCase)))
+            {
+                return new ConfigMutationResult
+                {
+                    Success = true,
+                    Message = $"Le reverse DNS '{ip}' est déjà monitoré."
+                };
+            }
+
+            var updated = CloneYamlConfig(_yamlConfig);
+            updated.DnsTargets = NormalizeDnsTargets([
+                .. (updated.DnsTargets ?? []),
+                new DnsTargetConfig
+                {
+                    ReverseLookupIp = ip,
+                    ExpectedHost = expectedHost
+                }
+            ]).ToList();
+
+            return SaveYamlConfig(updated, $"Le reverse DNS '{ip}' a été ajouté au fichier YAML.");
+        }
+    }
+
     public static string GetTcpTargetSource(string host, int port)
     {
         lock (_lock)
         {
             var inEnvironment = ParseTcpTargetsFromEnvironment().Any(target => string.Equals(target.Host, host, StringComparison.OrdinalIgnoreCase) && target.Port == port);
             var inYaml = NormalizeTcpTargets(_yamlConfig.TcpTargets ?? []).Any(target => string.Equals(target.Host, host, StringComparison.OrdinalIgnoreCase) && target.Port == port);
+            return BuildSourceLabel(inEnvironment, inYaml);
+        }
+    }
+
+    public static string GetHttpTargetSource(string url)
+    {
+        lock (_lock)
+        {
+            var inEnvironment = ParseHttpTargetsFromEnvironment().Any(target => string.Equals(target.Url, url, StringComparison.OrdinalIgnoreCase));
+            var inYaml = NormalizeHttpTargets(_yamlConfig.HttpTargets ?? []).Any(target => string.Equals(target.Url, url, StringComparison.OrdinalIgnoreCase));
+            return BuildSourceLabel(inEnvironment, inYaml);
+        }
+    }
+
+    public static string GetDnsTargetSource(string host)
+    {
+        lock (_lock)
+        {
+            var inEnvironment = ParseDnsTargetsFromEnvironment().Any(target => string.Equals(target.Host, host, StringComparison.OrdinalIgnoreCase) || string.Equals(target.ReverseLookupIp, host, StringComparison.OrdinalIgnoreCase));
+            var inYaml = NormalizeDnsTargets(_yamlConfig.DnsTargets ?? []).Any(target => string.Equals(target.Host, host, StringComparison.OrdinalIgnoreCase) || string.Equals(target.ReverseLookupIp, host, StringComparison.OrdinalIgnoreCase));
             return BuildSourceLabel(inEnvironment, inYaml);
         }
     }
@@ -288,6 +479,135 @@ static class AppConfigProvider
             var successMessage = inEnvironment
                 ? $"L'endpoint TCP '{host}:{port}' a été supprimé du YAML, mais reste monitoré via les variables d'environnement."
                 : $"L'endpoint TCP '{host}:{port}' a été supprimé du fichier YAML.";
+
+            return SaveYamlConfig(updated, successMessage);
+        }
+    }
+
+    public static ConfigMutationResult RemoveHttpTarget(string url)
+    {
+        url = url.Trim();
+        if (!Uri.TryCreate(url, UriKind.Absolute, out _))
+        {
+            return new ConfigMutationResult
+            {
+                Success = false,
+                Message = "Une URL HTTP/HTTPS absolue valide est obligatoire."
+            };
+        }
+
+        lock (_lock)
+        {
+            var envTargets = ParseHttpTargetsFromEnvironment();
+            var yamlTargets = NormalizeHttpTargets(_yamlConfig.HttpTargets ?? []);
+            var inEnvironment = envTargets.Any(target => string.Equals(target.Url, url, StringComparison.OrdinalIgnoreCase));
+            var inYaml = yamlTargets.Any(target => string.Equals(target.Url, url, StringComparison.OrdinalIgnoreCase));
+
+            if (!inYaml)
+            {
+                return new ConfigMutationResult
+                {
+                    Success = false,
+                    Message = inEnvironment
+                        ? $"L'endpoint HTTP '{url}' est fourni par variable d'environnement et ne peut pas être supprimé depuis l'interface web."
+                        : $"L'endpoint HTTP '{url}' n'existe pas dans le fichier YAML."
+                };
+            }
+
+            var updated = CloneYamlConfig(_yamlConfig);
+            updated.HttpTargets = yamlTargets
+                .Where(target => !string.Equals(target.Url, url, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+
+            var successMessage = inEnvironment
+                ? $"L'endpoint HTTP '{url}' a été supprimé du YAML, mais reste monitoré via les variables d'environnement."
+                : $"L'endpoint HTTP '{url}' a été supprimé du fichier YAML.";
+
+            return SaveYamlConfig(updated, successMessage);
+        }
+    }
+
+    public static ConfigMutationResult RemoveDnsTarget(string host)
+    {
+        host = host.Trim();
+        if (string.IsNullOrWhiteSpace(host))
+        {
+            return new ConfigMutationResult
+            {
+                Success = false,
+                Message = "L'hôte DNS est obligatoire."
+            };
+        }
+
+        lock (_lock)
+        {
+            var envTargets = ParseDnsTargetsFromEnvironment();
+            var yamlTargets = NormalizeDnsTargets(_yamlConfig.DnsTargets ?? []);
+            var inEnvironment = envTargets.Any(target => string.Equals(target.Host, host, StringComparison.OrdinalIgnoreCase) && string.IsNullOrWhiteSpace(target.ReverseLookupIp));
+            var inYaml = yamlTargets.Any(target => string.Equals(target.Host, host, StringComparison.OrdinalIgnoreCase) && string.IsNullOrWhiteSpace(target.ReverseLookupIp));
+
+            if (!inYaml)
+            {
+                return new ConfigMutationResult
+                {
+                    Success = false,
+                    Message = inEnvironment
+                        ? $"La cible DNS '{host}' est fournie par variable d'environnement et ne peut pas être supprimée depuis l'interface web."
+                        : $"La cible DNS '{host}' n'existe pas dans le fichier YAML."
+                };
+            }
+
+            var updated = CloneYamlConfig(_yamlConfig);
+            updated.DnsTargets = yamlTargets
+                .Where(target => !string.Equals(target.Host, host, StringComparison.OrdinalIgnoreCase) || !string.IsNullOrWhiteSpace(target.ReverseLookupIp))
+                .ToList();
+
+            var successMessage = inEnvironment
+                ? $"La cible DNS '{host}' a été supprimée du YAML, mais reste monitorée via les variables d'environnement."
+                : $"La cible DNS '{host}' a été supprimée du fichier YAML.";
+
+            return SaveYamlConfig(updated, successMessage);
+        }
+    }
+
+    public static ConfigMutationResult RemoveDnsReverseTarget(string ip)
+    {
+        ip = ip.Trim();
+        if (!System.Net.IPAddress.TryParse(ip, out _))
+        {
+            return new ConfigMutationResult
+            {
+                Success = false,
+                Message = "Une adresse IP valide est obligatoire pour le reverse DNS."
+            };
+        }
+
+        lock (_lock)
+        {
+            var envTargets = ParseDnsTargetsFromEnvironment();
+            var yamlTargets = NormalizeDnsTargets(_yamlConfig.DnsTargets ?? []);
+            var inEnvironment = envTargets.Any(target => string.Equals(target.ReverseLookupIp, ip, StringComparison.OrdinalIgnoreCase));
+            var inYaml = yamlTargets.Any(target => string.Equals(target.ReverseLookupIp, ip, StringComparison.OrdinalIgnoreCase));
+
+            if (!inYaml)
+            {
+                return new ConfigMutationResult
+                {
+                    Success = false,
+                    Message = inEnvironment
+                        ? $"Le reverse DNS '{ip}' est fourni par variable d'environnement et ne peut pas être supprimé depuis l'interface web."
+                        : $"Le reverse DNS '{ip}' n'existe pas dans le fichier YAML."
+                };
+            }
+
+            var updated = CloneYamlConfig(_yamlConfig);
+            updated.DnsTargets = yamlTargets
+                .Where(target => !string.Equals(target.ReverseLookupIp, ip, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+
+            var successMessage = inEnvironment
+                ? $"Le reverse DNS '{ip}' a été supprimé du YAML, mais reste monitoré via les variables d'environnement."
+                : $"Le reverse DNS '{ip}' a été supprimé du fichier YAML.";
 
             return SaveYamlConfig(updated, successMessage);
         }
@@ -461,9 +781,12 @@ static class AppConfigProvider
             DashboardAuthUsername = source.DashboardAuthUsername,
             DashboardAuthPasswordHash = source.DashboardAuthPasswordHash,
             DashboardAuthPasswordHashFile = source.DashboardAuthPasswordHashFile,
+            DashboardSessionHours = source.DashboardSessionHours,
             DashboardRefreshSeconds = source.DashboardRefreshSeconds,
             PingTargets = source.PingTargets is null ? null : [.. source.PingTargets],
-            TcpTargets = source.TcpTargets is null ? null : [.. source.TcpTargets.Select(target => new TcpTargetConfig { Host = target.Host, Port = target.Port })]
+            TcpTargets = source.TcpTargets is null ? null : [.. source.TcpTargets.Select(target => new TcpTargetConfig { Host = target.Host, Port = target.Port })],
+            HttpTargets = source.HttpTargets is null ? null : [.. source.HttpTargets.Select(target => new HttpTargetConfig { Url = target.Url, ExpectedStatusCode = target.ExpectedStatusCode, ContainsText = target.ContainsText })],
+            DnsTargets = source.DnsTargets is null ? null : [.. source.DnsTargets.Select(target => new DnsTargetConfig { Host = target.Host, ExpectedAddress = target.ExpectedAddress, ReverseLookupIp = target.ReverseLookupIp, ExpectedHost = target.ExpectedHost })]
         };
     }
 
@@ -490,6 +813,7 @@ static class AppConfigProvider
             ("authUsername", config.DashboardAuthUsername, false),
             ("authPasswordHash", config.DashboardAuthPasswordHash, false),
             ("authPasswordHashFile", config.DashboardAuthPasswordHashFile, false),
+            ("sessionHours", config.DashboardSessionHours?.ToString(), true),
             ("refreshSeconds", config.DashboardRefreshSeconds?.ToString(), true)
         ]);
 
@@ -501,7 +825,7 @@ static class AppConfigProvider
             ("shutdownSound", config.ShutdownSound, false)
         ]);
 
-        if ((config.PingTargets?.Count ?? 0) > 0 || (config.TcpTargets?.Count ?? 0) > 0)
+        if ((config.PingTargets?.Count ?? 0) > 0 || (config.TcpTargets?.Count ?? 0) > 0 || (config.HttpTargets?.Count ?? 0) > 0 || (config.DnsTargets?.Count ?? 0) > 0)
         {
             AppendBlankLine(lines);
             lines.Add("monitoring:");
@@ -520,6 +844,39 @@ static class AppConfigProvider
                 {
                     lines.Add($"    - host: {QuoteYaml(target.Host)}");
                     lines.Add($"      port: {target.Port}");
+                }
+            }
+
+            if (config.HttpTargets?.Count > 0)
+            {
+                lines.Add("  httpTargets:");
+                foreach (var target in config.HttpTargets)
+                {
+                    lines.Add($"    - url: {QuoteYaml(target.Url)}");
+                    if (target.ExpectedStatusCode is int expectedStatusCode)
+                        lines.Add($"      expectedStatusCode: {expectedStatusCode}");
+                    if (!string.IsNullOrWhiteSpace(target.ContainsText))
+                        lines.Add($"      containsText: {QuoteYaml(target.ContainsText!)}");
+                }
+            }
+
+            if (config.DnsTargets?.Count > 0)
+            {
+                lines.Add("  dnsTargets:");
+                foreach (var target in config.DnsTargets)
+                {
+                    if (!string.IsNullOrWhiteSpace(target.ReverseLookupIp))
+                    {
+                        lines.Add($"    - ip: {QuoteYaml(target.ReverseLookupIp)}");
+                        if (!string.IsNullOrWhiteSpace(target.ExpectedHost))
+                            lines.Add($"      expectedHost: {QuoteYaml(target.ExpectedHost)}");
+                    }
+                    else
+                    {
+                        lines.Add($"    - host: {QuoteYaml(target.Host)}");
+                        if (!string.IsNullOrWhiteSpace(target.ExpectedAddress))
+                            lines.Add($"      expectedAddress: {QuoteYaml(target.ExpectedAddress)}");
+                    }
                 }
             }
         }
@@ -579,6 +936,16 @@ static class AppConfigProvider
             ? NormalizeTcpTargets(yamlConfig.TcpTargets)
             : [];
 
+        var environmentHttpTargets = ParseHttpTargetsFromEnvironment();
+        var yamlHttpTargets = yamlConfig.HttpTargets is not null
+            ? NormalizeHttpTargets(yamlConfig.HttpTargets)
+            : [];
+
+        var environmentDnsTargets = ParseDnsTargetsFromEnvironment();
+        var yamlDnsTargets = yamlConfig.DnsTargets is not null
+            ? NormalizeDnsTargets(yamlConfig.DnsTargets)
+            : [];
+
         return new AppConfig
         {
             AppVersion = FirstNonEmpty(yamlConfig.AppVersion, Environment.GetEnvironmentVariable("APP_VERSION")) ?? "inconnue",
@@ -596,9 +963,12 @@ static class AppConfigProvider
                 ReadSecretFile(FirstNonEmpty(yamlConfig.DashboardAuthPasswordHashFile, Environment.GetEnvironmentVariable("DASHBOARD_AUTH_PASSWORD_HASH_FILE"))),
                 yamlConfig.DashboardAuthPasswordHash,
                 Environment.GetEnvironmentVariable("DASHBOARD_AUTH_PASSWORD_HASH")) ?? string.Empty,
+            DashboardSessionHours = yamlConfig.DashboardSessionHours ?? ParsePositiveInt(Environment.GetEnvironmentVariable("DASHBOARD_SESSION_HOURS"), 12),
             DashboardRefreshSeconds = yamlConfig.DashboardRefreshSeconds ?? ParsePositiveInt(Environment.GetEnvironmentVariable("DASHBOARD_REFRESH_SECONDS"), 5),
             PingTargets = MergePingTargets(environmentPingTargets, yamlPingTargets),
-            TcpTargets = MergeTcpTargets(environmentTcpTargets, yamlTcpTargets)
+            TcpTargets = MergeTcpTargets(environmentTcpTargets, yamlTcpTargets),
+            HttpTargets = MergeHttpTargets(environmentHttpTargets, yamlHttpTargets),
+            DnsTargets = MergeDnsTargets(environmentDnsTargets, yamlDnsTargets)
         };
     }
 
@@ -634,6 +1004,24 @@ static class AppConfigProvider
             .ToArray();
     }
 
+    private static IReadOnlyList<HttpTargetConfig> MergeHttpTargets(IReadOnlyList<HttpTargetConfig> environmentTargets, IReadOnlyList<HttpTargetConfig> yamlTargets)
+    {
+        return environmentTargets
+            .Concat(yamlTargets)
+            .GroupBy(target => target.Url, StringComparer.OrdinalIgnoreCase)
+            .Select(group => group.First())
+            .ToArray();
+    }
+
+    private static IReadOnlyList<DnsTargetConfig> MergeDnsTargets(IReadOnlyList<DnsTargetConfig> environmentTargets, IReadOnlyList<DnsTargetConfig> yamlTargets)
+    {
+        return environmentTargets
+            .Concat(yamlTargets)
+            .GroupBy(target => target.Host, StringComparer.OrdinalIgnoreCase)
+            .Select(group => group.First())
+            .ToArray();
+    }
+
     private static IReadOnlyList<string> NormalizePingTargets(IReadOnlyList<string> targets)
     {
         return targets
@@ -648,6 +1036,24 @@ static class AppConfigProvider
         return targets
             .Where(target => !string.IsNullOrWhiteSpace(target.Host) && target.Port > 0)
             .GroupBy(target => $"{target.Host}:{target.Port}", StringComparer.OrdinalIgnoreCase)
+            .Select(group => group.First())
+            .ToArray();
+    }
+
+    private static IReadOnlyList<HttpTargetConfig> NormalizeHttpTargets(IReadOnlyList<HttpTargetConfig> targets)
+    {
+        return targets
+            .Where(target => Uri.TryCreate(target.Url, UriKind.Absolute, out _))
+            .GroupBy(target => target.Url, StringComparer.OrdinalIgnoreCase)
+            .Select(group => group.First())
+            .ToArray();
+    }
+
+    private static IReadOnlyList<DnsTargetConfig> NormalizeDnsTargets(IReadOnlyList<DnsTargetConfig> targets)
+    {
+        return targets
+            .Where(target => !string.IsNullOrWhiteSpace(target.Host) || !string.IsNullOrWhiteSpace(target.ReverseLookupIp))
+            .GroupBy(target => string.IsNullOrWhiteSpace(target.ReverseLookupIp) ? $"host:{target.Host}" : $"ip:{target.ReverseLookupIp}", StringComparer.OrdinalIgnoreCase)
             .Select(group => group.First())
             .ToArray();
     }
@@ -678,6 +1084,30 @@ static class AppConfigProvider
         }
 
         return NormalizeTcpTargets(targets);
+    }
+
+    private static IReadOnlyList<HttpTargetConfig> ParseHttpTargetsFromEnvironment()
+    {
+        var raw = Environment.GetEnvironmentVariable("HTTP_TARGETS");
+        if (string.IsNullOrWhiteSpace(raw))
+            return [];
+
+        return NormalizeHttpTargets(raw
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(url => new HttpTargetConfig { Url = url.Trim() })
+            .ToArray());
+    }
+
+    private static IReadOnlyList<DnsTargetConfig> ParseDnsTargetsFromEnvironment()
+    {
+        var raw = Environment.GetEnvironmentVariable("DNS_TARGETS");
+        if (string.IsNullOrWhiteSpace(raw))
+            return [];
+
+        return NormalizeDnsTargets(raw
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(host => new DnsTargetConfig { Host = host.Trim() })
+            .ToArray());
     }
 
     private static int ParsePositiveInt(string? rawValue, int defaultValue)
@@ -810,6 +1240,9 @@ static class AppConfigProvider
                 case "authPasswordHashFile":
                     config.DashboardAuthPasswordHashFile = Unquote(value);
                     break;
+                case "sessionHours":
+                    config.DashboardSessionHours = ParseYamlPositiveInt(value, key);
+                    break;
                 case "refreshSeconds":
                     config.DashboardRefreshSeconds = ParseYamlPositiveInt(value, key);
                     break;
@@ -867,6 +1300,12 @@ static class AppConfigProvider
                 case "tcpTargets":
                     config.TcpTargets = ParseTcpTargetList(lines, ref index, 4);
                     break;
+                case "httpTargets":
+                    config.HttpTargets = ParseHttpTargetList(lines, ref index, 4);
+                    break;
+                case "dnsTargets":
+                    config.DnsTargets = ParseDnsTargetList(lines, ref index, 4);
+                    break;
                 default:
                     SkipIndentedBlock(lines, ref index, 4);
                     break;
@@ -920,6 +1359,149 @@ static class AppConfigProvider
                 items.Add(value);
 
             index++;
+        }
+
+        return items;
+    }
+
+    private static List<HttpTargetConfig> ParseHttpTargetList(string[] lines, ref int index, int expectedIndent)
+    {
+        var items = new List<HttpTargetConfig>();
+
+        while (index < lines.Length)
+        {
+            var line = PrepareLine(lines[index]);
+            if (line.IsEmpty)
+            {
+                index++;
+                continue;
+            }
+
+            if (line.Indent < expectedIndent)
+                break;
+
+            if (line.Indent != expectedIndent || !line.Content.StartsWith("- "))
+                throw new FormatException($"Liste httpTargets invalide : {line.Content}");
+
+            var item = line.Content[2..].Trim();
+            if (Uri.TryCreate(Unquote(item), UriKind.Absolute, out _))
+            {
+                items.Add(new HttpTargetConfig { Url = Unquote(item) });
+                index++;
+                continue;
+            }
+
+            var url = string.Empty;
+            int? expectedStatusCode = null;
+            string? containsText = null;
+
+            if (TryParseScalar(item, out var inlineKey, out var inlineValue))
+                ApplyHttpField(inlineKey, inlineValue, ref url, ref expectedStatusCode, ref containsText);
+            else
+                throw new FormatException($"Entrée httpTargets invalide : {line.Content}");
+
+            index++;
+            while (index < lines.Length)
+            {
+                var childLine = PrepareLine(lines[index]);
+                if (childLine.IsEmpty)
+                {
+                    index++;
+                    continue;
+                }
+
+                if (childLine.Indent <= expectedIndent)
+                    break;
+
+                if (childLine.Indent != expectedIndent + 2 || !TryParseScalar(childLine.Content, out var childKey, out var childValue))
+                    throw new FormatException($"Entrée httpTargets invalide : {childLine.Content}");
+
+                ApplyHttpField(childKey, childValue, ref url, ref expectedStatusCode, ref containsText);
+                index++;
+            }
+
+            if (!Uri.TryCreate(url, UriKind.Absolute, out _))
+                throw new FormatException("Chaque entrée httpTargets doit contenir une URL absolue valide.");
+
+            items.Add(new HttpTargetConfig
+            {
+                Url = url,
+                ExpectedStatusCode = expectedStatusCode,
+                ContainsText = containsText
+            });
+        }
+
+        return items;
+    }
+
+    private static List<DnsTargetConfig> ParseDnsTargetList(string[] lines, ref int index, int expectedIndent)
+    {
+        var items = new List<DnsTargetConfig>();
+
+        while (index < lines.Length)
+        {
+            var line = PrepareLine(lines[index]);
+            if (line.IsEmpty)
+            {
+                index++;
+                continue;
+            }
+
+            if (line.Indent < expectedIndent)
+                break;
+
+            if (line.Indent != expectedIndent || !line.Content.StartsWith("- "))
+                throw new FormatException($"Liste dnsTargets invalide : {line.Content}");
+
+            var item = line.Content[2..].Trim();
+            var scalarHost = Unquote(item);
+            if (!string.IsNullOrWhiteSpace(scalarHost) && !TryParseScalar(item, out _, out _))
+            {
+                items.Add(new DnsTargetConfig { Host = scalarHost });
+                index++;
+                continue;
+            }
+
+            var host = string.Empty;
+            string? expectedAddress = null;
+            string? reverseLookupIp = null;
+            string? expectedHost = null;
+
+            if (TryParseScalar(item, out var inlineKey, out var inlineValue))
+                ApplyDnsField(inlineKey, inlineValue, ref host, ref expectedAddress, ref reverseLookupIp, ref expectedHost);
+            else
+                throw new FormatException($"Entrée dnsTargets invalide : {line.Content}");
+
+            index++;
+            while (index < lines.Length)
+            {
+                var childLine = PrepareLine(lines[index]);
+                if (childLine.IsEmpty)
+                {
+                    index++;
+                    continue;
+                }
+
+                if (childLine.Indent <= expectedIndent)
+                    break;
+
+                if (childLine.Indent != expectedIndent + 2 || !TryParseScalar(childLine.Content, out var childKey, out var childValue))
+                    throw new FormatException($"Entrée dnsTargets invalide : {childLine.Content}");
+
+                ApplyDnsField(childKey, childValue, ref host, ref expectedAddress, ref reverseLookupIp, ref expectedHost);
+                index++;
+            }
+
+            if (string.IsNullOrWhiteSpace(host) && string.IsNullOrWhiteSpace(reverseLookupIp))
+                throw new FormatException("Chaque entrée dnsTargets doit contenir host ou ip.");
+
+            items.Add(new DnsTargetConfig
+            {
+                Host = host,
+                ExpectedAddress = expectedAddress,
+                ReverseLookupIp = reverseLookupIp,
+                ExpectedHost = expectedHost
+            });
         }
 
         return items;
@@ -998,6 +1580,54 @@ static class AppConfigProvider
                 break;
             case "port":
                 port = ParseYamlPositiveInt(value, key);
+                break;
+        }
+    }
+
+    private static void ApplyHttpField(string key, string value, ref string url, ref int? expectedStatusCode, ref string? containsText)
+    {
+        switch (key)
+        {
+            case "url":
+                url = Unquote(value);
+                break;
+            case "expectedStatusCode":
+                expectedStatusCode = ParseYamlPositiveInt(value, key);
+                break;
+            case "containsText":
+                containsText = Unquote(value);
+                break;
+        }
+    }
+
+    private static void ApplyDnsField(string key, string value, ref string host, ref string? expectedAddress)
+    {
+        switch (key)
+        {
+            case "host":
+                host = Unquote(value);
+                break;
+            case "expectedAddress":
+                expectedAddress = Unquote(value);
+                break;
+        }
+    }
+
+    private static void ApplyDnsField(string key, string value, ref string host, ref string? expectedAddress, ref string? reverseLookupIp, ref string? expectedHost)
+    {
+        switch (key)
+        {
+            case "host":
+                host = Unquote(value);
+                break;
+            case "expectedAddress":
+                expectedAddress = Unquote(value);
+                break;
+            case "ip":
+                reverseLookupIp = Unquote(value);
+                break;
+            case "expectedHost":
+                expectedHost = Unquote(value);
                 break;
         }
     }
@@ -1133,7 +1763,10 @@ sealed class YamlAppConfig
     public string? DashboardAuthUsername { get; set; }
     public string? DashboardAuthPasswordHash { get; set; }
     public string? DashboardAuthPasswordHashFile { get; set; }
+    public int? DashboardSessionHours { get; set; }
     public int? DashboardRefreshSeconds { get; set; }
     public List<string>? PingTargets { get; set; }
     public List<TcpTargetConfig>? TcpTargets { get; set; }
+    public List<HttpTargetConfig>? HttpTargets { get; set; }
+    public List<DnsTargetConfig>? DnsTargets { get; set; }
 }

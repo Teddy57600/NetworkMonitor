@@ -10,7 +10,6 @@ static class DashboardSessionAuth
 {
     public const string SessionCookieName = "networkmonitor-dashboard-session";
     private static readonly ConcurrentDictionary<string, DateTimeOffset> Sessions = new(StringComparer.Ordinal);
-    private static readonly TimeSpan SessionLifetime = TimeSpan.FromHours(12);
     private const string PasswordHashPrefix = "NM1$PBKDF2$SHA256$";
 
     public static bool ValidateCredentials(AppConfig config, string username, string password)
@@ -41,12 +40,12 @@ static class DashboardSessionAuth
         return false;
     }
 
-    public static void SignIn(HttpRequest request, HttpResponse response)
+    public static void SignIn(HttpRequest request, HttpResponse response, TimeSpan sessionLifetime)
     {
         CleanupExpiredSessions();
 
         var token = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
-        var expiresAt = DateTimeOffset.UtcNow.Add(SessionLifetime);
+        var expiresAt = DateTimeOffset.UtcNow.Add(sessionLifetime);
         Sessions[token] = expiresAt;
 
         response.Cookies.Append(SessionCookieName, token, new CookieOptions
@@ -55,7 +54,7 @@ static class DashboardSessionAuth
             IsEssential = true,
             SameSite = SameSiteMode.Lax,
             Secure = UseSecureCookies(request),
-            MaxAge = SessionLifetime,
+            MaxAge = sessionLifetime,
             Path = "/"
         });
     }

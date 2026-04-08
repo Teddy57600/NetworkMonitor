@@ -16,6 +16,8 @@ sealed class DashboardSnapshot
     public DashboardSummary Summary { get; init; } = new();
     public IReadOnlyList<DashboardMonitorSnapshot> PingMonitors { get; init; } = [];
     public IReadOnlyList<DashboardMonitorSnapshot> TcpMonitors { get; init; } = [];
+    public IReadOnlyList<DashboardMonitorSnapshot> HttpMonitors { get; init; } = [];
+    public IReadOnlyList<DashboardMonitorSnapshot> DnsMonitors { get; init; } = [];
     public IReadOnlyList<DashboardIncidentSnapshot> RecentIncidents { get; init; } = [];
 }
 
@@ -23,6 +25,13 @@ sealed class DashboardActionResponse
 {
     public bool Success { get; init; }
     public string Message { get; init; } = string.Empty;
+}
+
+sealed class DashboardConfigDocument
+{
+    public bool Success { get; init; }
+    public string Path { get; init; } = string.Empty;
+    public string Content { get; init; } = string.Empty;
 }
 
 sealed class DashboardSummary
@@ -66,6 +75,7 @@ sealed class DashboardIncidentSnapshot
 [JsonSerializable(typeof(DashboardSnapshot))]
 [JsonSerializable(typeof(DashboardSummary))]
 [JsonSerializable(typeof(DashboardActionResponse))]
+[JsonSerializable(typeof(DashboardConfigDocument))]
 [JsonSerializable(typeof(DashboardMonitorSnapshot[]))]
 [JsonSerializable(typeof(DashboardIncidentSnapshot[]))]
 internal partial class DashboardJsonContext : JsonSerializerContext

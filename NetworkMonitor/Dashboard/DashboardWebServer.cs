@@ -70,19 +70,23 @@ static class DashboardWebServer
             var form = await context.Request.ReadFormAsync(context.RequestAborted);
             var username = form["username"].ToString();
             var password = form["password"].ToString();
+            var remoteAddress = GetRemoteAddress(context);
 
             if (!DashboardSessionAuth.ValidateCredentials(currentConfig, username, password))
             {
+                logger.LogWarning("Échec authentification dashboard pour {Username} depuis {RemoteAddress}", username, remoteAddress);
                 context.Response.Redirect("/login?error=1");
                 return;
             }
 
-            DashboardSessionAuth.SignIn(context.Request, context.Response);
+            logger.LogInformation("Connexion dashboard réussie pour {Username} depuis {RemoteAddress}", username, remoteAddress);
+            DashboardSessionAuth.SignIn(context.Request, context.Response, TimeSpan.FromHours(currentConfig.DashboardSessionHours));
             context.Response.Redirect("/");
         });
 
         app.MapPost("/logout", context =>
         {
+            logger.LogInformation("Déconnexion dashboard depuis {RemoteAddress}", GetRemoteAddress(context));
             DashboardSessionAuth.SignOut(context.Request, context.Response);
             context.Response.Redirect("/login");
             return Task.CompletedTask;
@@ -130,6 +134,69 @@ static class DashboardWebServer
         {
             var json = JsonSerializer.Serialize(snapshotFactory(), DashboardJsonContext.Default.DashboardSnapshot);
             return Results.Text(json, "application/json");
+        });
+
+        app.MapGet("/api/config/raw", () =>
+        {
+            var response = new DashboardConfigDocument
+            {
+                Success = true,
+                Path = AppConfigProvider.ConfigPath,
+                Content = AppConfigProvider.GetRawConfigContent()
+            };
+
+            var json = JsonSerializer.Serialize(response, typeof(DashboardConfigDocument), DashboardJsonContext.Default);
+            return Results.Text(json, "application/json");
+        });
+
+        app.MapPost("/api/config/raw", async Task<IResult> (HttpContext context) =>
+        {
+            var form = await context.Request.ReadFormAsync(context.RequestAborted);
+            var content = form["content"].ToString();
+            var result = AppConfigProvider.ReplaceRawConfig(content);
+            var response = new DashboardActionResponse
+            {
+                Success = result.Success,
+                Message = result.Message
+            };
+
+            var json = JsonSerializer.Serialize(response, typeof(DashboardActionResponse), DashboardJsonContext.Default);
+            return Results.Text(json, "application/json", statusCode: result.Success ? StatusCodes.Status200OK : StatusCodes.Status400BadRequest);
+        });
+
+        app.MapPost("/api/config/import", async Task<IResult> (HttpContext context) =>
+        {
+            var form = await context.Request.ReadFormAsync(context.RequestAborted);
+            var file = form.Files.GetFile("configFile");
+            if (file is null || file.Length == 0)
+            {
+                var invalid = new DashboardActionResponse
+                {
+                    Success = false,
+                    Message = "Aucun fichier YAML à importer n'a été fourni."
+                };
+
+                var invalidJson = JsonSerializer.Serialize(invalid, typeof(DashboardActionResponse), DashboardJsonContext.Default);
+                return Results.Text(invalidJson, "application/json", statusCode: StatusCodes.Status400BadRequest);
+            }
+
+            using var reader = new StreamReader(file.OpenReadStream());
+            var content = await reader.ReadToEndAsync(context.RequestAborted);
+            var result = AppConfigProvider.ReplaceRawConfig(content);
+            var response = new DashboardActionResponse
+            {
+                Success = result.Success,
+                Message = result.Success ? $"Configuration importée depuis '{file.FileName}'." : result.Message
+            };
+
+            var json = JsonSerializer.Serialize(response, typeof(DashboardActionResponse), DashboardJsonContext.Default);
+            return Results.Text(json, "application/json", statusCode: result.Success ? StatusCodes.Status200OK : StatusCodes.Status400BadRequest);
+        });
+
+        app.MapGet("/api/config/export", () =>
+        {
+            var content = AppConfigProvider.GetRawConfigContent();
+            return Results.File(System.Text.Encoding.UTF8.GetBytes(content), "application/x-yaml", "config.yaml");
         });
 
         app.MapPost("/api/actions/check-now", () =>
@@ -266,6 +333,102 @@ static class DashboardWebServer
                 statusCode: result.Success ? StatusCodes.Status200OK : StatusCodes.Status400BadRequest);
         });
 
+        app.MapPost("/api/actions/add-http", (string url, int? expectedStatusCode, string? containsText) =>
+        {
+            var result = AppConfigProvider.AddHttpTarget(url, expectedStatusCode, containsText);
+            var response = new DashboardActionResponse
+            {
+                Success = result.Success,
+                Message = result.Message
+            };
+
+            var json = JsonSerializer.Serialize(response, typeof(DashboardActionResponse), DashboardJsonContext.Default);
+            return Results.Text(
+                json,
+                "application/json",
+                statusCode: result.Success ? StatusCodes.Status200OK : StatusCodes.Status400BadRequest);
+        });
+
+        app.MapPost("/api/actions/add-dns", (string host, string? expectedAddress) =>
+        {
+            var result = AppConfigProvider.AddDnsTarget(host, expectedAddress);
+            var response = new DashboardActionResponse
+            {
+                Success = result.Success,
+                Message = result.Message
+            };
+
+            var json = JsonSerializer.Serialize(response, typeof(DashboardActionResponse), DashboardJsonContext.Default);
+            return Results.Text(
+                json,
+                "application/json",
+                statusCode: result.Success ? StatusCodes.Status200OK : StatusCodes.Status400BadRequest);
+        });
+
+        app.MapPost("/api/actions/add-dns-reverse", (string ip, string? expectedHost) =>
+        {
+            var result = AppConfigProvider.AddDnsReverseTarget(ip, expectedHost);
+            var response = new DashboardActionResponse
+            {
+                Success = result.Success,
+                Message = result.Message
+            };
+
+            var json = JsonSerializer.Serialize(response, typeof(DashboardActionResponse), DashboardJsonContext.Default);
+            return Results.Text(
+                json,
+                "application/json",
+                statusCode: result.Success ? StatusCodes.Status200OK : StatusCodes.Status400BadRequest);
+        });
+
+        app.MapPost("/api/actions/remove-http", (string url) =>
+        {
+            var result = AppConfigProvider.RemoveHttpTarget(url);
+            var response = new DashboardActionResponse
+            {
+                Success = result.Success,
+                Message = result.Message
+            };
+
+            var json = JsonSerializer.Serialize(response, typeof(DashboardActionResponse), DashboardJsonContext.Default);
+            return Results.Text(
+                json,
+                "application/json",
+                statusCode: result.Success ? StatusCodes.Status200OK : StatusCodes.Status400BadRequest);
+        });
+
+        app.MapPost("/api/actions/remove-dns", (string host) =>
+        {
+            var result = AppConfigProvider.RemoveDnsTarget(host);
+            var response = new DashboardActionResponse
+            {
+                Success = result.Success,
+                Message = result.Message
+            };
+
+            var json = JsonSerializer.Serialize(response, typeof(DashboardActionResponse), DashboardJsonContext.Default);
+            return Results.Text(
+                json,
+                "application/json",
+                statusCode: result.Success ? StatusCodes.Status200OK : StatusCodes.Status400BadRequest);
+        });
+
+        app.MapPost("/api/actions/remove-dns-reverse", (string ip) =>
+        {
+            var result = AppConfigProvider.RemoveDnsReverseTarget(ip);
+            var response = new DashboardActionResponse
+            {
+                Success = result.Success,
+                Message = result.Message
+            };
+
+            var json = JsonSerializer.Serialize(response, typeof(DashboardActionResponse), DashboardJsonContext.Default);
+            return Results.Text(
+                json,
+                "application/json",
+                statusCode: result.Success ? StatusCodes.Status200OK : StatusCodes.Status400BadRequest);
+        });
+
         app.MapPost("/api/actions/remove-tcp", (string host, int port) =>
         {
             var result = AppConfigProvider.RemoveTcpTarget(host, port);
@@ -306,5 +469,13 @@ static class DashboardWebServer
         await app.StartAsync(ct);
         logger.LogInformation("Tableau de bord web disponible sur {Urls}", string.Join(", ", app.Urls));
         return app;
+    }
+
+    private static string GetRemoteAddress(HttpContext context)
+    {
+        if (context.Request.Headers.TryGetValue("X-Forwarded-For", out var forwardedFor) && !string.IsNullOrWhiteSpace(forwardedFor))
+            return forwardedFor.ToString();
+
+        return context.Connection.RemoteIpAddress?.ToString() ?? "inconnue";
     }
 }

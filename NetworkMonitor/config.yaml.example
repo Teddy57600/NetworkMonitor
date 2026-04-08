@@ -1,7 +1,7 @@
 appVersion: "1.6.0"
 snoozeDays: 3
 
-# Les cibles définies ici s'ajoutent à celles fournies via PING_TARGETS et TCP_TARGETS.
+# Les cibles définies ici s'ajoutent à celles fournies via PING_TARGETS, TCP_TARGETS, HTTP_TARGETS et DNS_TARGETS.
 # Les doublons sont supprimés automatiquement.
 
 schedule:
@@ -13,6 +13,7 @@ dashboard:
   authEnabled: false
   authUsername: "admin"
   authPasswordHash: "NM1$PBKDF2$SHA256$600000$base64-sel$base64-hash"
+  sessionHours: 12
   refreshSeconds: 5
 
 pushover:
@@ -29,3 +30,12 @@ monitoring:
     - google.com:443
     - host: localhost
       port: 80
+  httpTargets:
+    - url: "https://example.com/health"
+      expectedStatusCode: 200
+      containsText: "OK"
+  dnsTargets:
+    - host: "example.com"
+      expectedAddress: "93.184.216.34"
+    - ip: "8.8.8.8"
+      expectedHost: "dns.google"

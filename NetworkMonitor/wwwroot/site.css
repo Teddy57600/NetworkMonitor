@@ -232,6 +232,10 @@ body {
     font-weight: 600;
     cursor: pointer;
     transition: transform .15s ease, opacity .15s ease, background .15s ease;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    text-decoration: none;
 }
 .action-button:hover:not(:disabled) {
     transform: translateY(-1px);
@@ -380,6 +384,28 @@ body {
 .field-group select:focus {
     outline: 2px solid rgba(96, 165, 250, .4);
     border-color: rgba(96, 165, 250, .5);
+}
+
+.config-editor {
+    min-height: 320px;
+    width: 100%;
+    resize: vertical;
+    border: 1px solid rgba(148, 163, 184, .18);
+    background: rgba(15, 23, 42, .65);
+    color: var(--text);
+    border-radius: 16px;
+    padding: 1rem;
+    font: 500 .92rem/1.5 Consolas, "Cascadia Code", monospace;
+}
+
+.config-editor:focus {
+    outline: 2px solid rgba(96, 165, 250, .4);
+    border-color: rgba(96, 165, 250, .5);
+}
+
+:root[data-theme="light"] .config-editor {
+    background: rgba(255, 255, 255, .88);
+    color: #0f172a;
 }
 
 .field-hint {

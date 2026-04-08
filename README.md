@@ -16,12 +16,14 @@
 
 ## ✨ Vue d'ensemble
 
-**NetworkMonitor** est une application console .NET pensée pour superviser simplement des IP et des services TCP, sans stack de monitoring lourde.
+**NetworkMonitor** est une application console .NET pensée pour superviser simplement des IP, des services TCP, des endpoints HTTP/HTTPS et des résolutions DNS, sans stack de monitoring lourde.
 
 Elle permet de :
 
 - surveiller des **adresses IP** via `ping`
 - surveiller des **services TCP** via `host:port`
+- surveiller des **endpoints HTTP/HTTPS** avec code HTTP et texte attendu
+- surveiller des **résolutions DNS** forward et reverse DNS (PTR)
 - afficher un **tableau de bord web responsive** avec vue temps réel
 - envoyer des notifications **Pushover** lors d'une panne, d'une reprise et d'une indisponibilité prolongée
 - envoyer une notification **au démarrage et à l'arrêt** du service
@@ -49,6 +51,18 @@ Le projet cible **.NET 11** et active la **publication Native AOT**.
 - vérification de disponibilité sur des couples `host:port`
 - jusqu'à **3 tentatives de connexion** par cycle
 - notification de reprise quand le service redevient accessible
+
+### Surveillance HTTP / HTTPS
+- lecture des cibles via `HTTP_TARGETS` ou YAML
+- vérification d'URL HTTP/HTTPS
+- possibilité de valider un **code HTTP attendu**
+- possibilité de vérifier la présence d'un **texte attendu** dans la réponse
+
+### Surveillance DNS
+- lecture des cibles via `DNS_TARGETS` ou YAML
+- vérification qu'un **nom de domaine** résout correctement
+- possibilité de vérifier une **adresse IP attendue**
+- possibilité de vérifier le **reverse DNS / PTR** d'une IP vers un hostname attendu
 
 ### Alertes Pushover
 - notification `🔴 DOWN`
@@ -84,9 +98,16 @@ Le projet cible **.NET 11** et active la **publication Native AOT**.
 - API JSON `GET /api/dashboard`
 - endpoint de santé `GET /api/health`
 - action web pour demander un **check immédiat**
+- action web pour **activer un snooze** sur un moniteur
 - action web pour **supprimer un snooze** sur un moniteur
 - formulaires web pour **ajouter une cible Ping** ou **un test TCP**
 - boutons web pour **supprimer une cible Ping** ou **un test TCP**
+- **édition complète du YAML** depuis le dashboard
+- **import / export** de configuration YAML
+- filtres et recherche sur l'historique des incidents
+- filtres, recherche et tri sur les listes de moniteurs
+- mode **dark / light** mémorisé côté navigateur
+- favicon et titre d'onglet dynamiques selon l'état global
 - rafraîchissement automatique configurable
 
 ---
@@ -112,9 +133,12 @@ NetworkMonitor/
 │  │  └─ AppConfigProvider.cs
 │  ├─ Dashboard/
 │  │  ├─ DashboardSnapshotModels.cs
+│  │  ├─ DashboardSessionAuth.cs
 │  │  ├─ DashboardWebServer.cs
 │  │  └─ ManualCheckTrigger.cs
 │  ├─ Monitoring/
+│  │  ├─ DnsMonitorState.cs
+│  │  ├─ HttpEndpointMonitorState.cs
 │  │  ├─ MonitorState.cs
 │  │  └─ TcpPortMonitorState.cs
 │  ├─ Notifications/
@@ -133,8 +157,10 @@ NetworkMonitor/
 │  ├─ config.yaml.example
 │  └─ wwwroot/
 │     ├─ app.js
+│     ├─ favicon.svg
 │     ├─ index.html
-│     └─ site.css
+│     ├─ site.css
+│     └─ theme.js
 └─ README.md
 ```
 
@@ -161,6 +187,8 @@ Exception pour les cibles de supervision :
 
 - `pingTargets` du YAML **s'ajoute** à `PING_TARGETS`
 - `tcpTargets` du YAML **s'ajoute** à `TCP_TARGETS`
+- `httpTargets` du YAML **s'ajoute** à `HTTP_TARGETS`
+- `dnsTargets` du YAML **s'ajoute** à `DNS_TARGETS`
 - les doublons sont supprimés automatiquement
 
 Exemple :
@@ -191,6 +219,8 @@ Résultat effectif :
 |---|---|---|---|
 | `PING_TARGETS` | Liste d'IPs à surveiller, séparées par des virgules | `192.168.1.1,8.8.8.8` | vide |
 | `TCP_TARGETS` | Liste d'endpoints TCP `host:port`, séparés par des virgules | `google.com:443,192.168.1.10:22` | vide |
+| `HTTP_TARGETS` | Liste d'URLs HTTP/HTTPS à surveiller, séparées par des virgules | `https://example.com/health,https://api.example.com/status` | vide |
+| `DNS_TARGETS` | Liste d'hôtes DNS forward à surveiller, séparés par des virgules | `example.com,dns.google` | vide |
 | `SCHEDULE_INTERVAL_SECONDS` | Intervalle entre deux cycles | `10` | `10` |
 | `SCHEDULE_CRON` | Expression CRON | `*/3 * * * *` | non définie |
 | `PUSHOVER_TOKEN` | Token d'application Pushover | `xxxxx` | vide |
@@ -201,7 +231,9 @@ Résultat effectif :
 | `DASHBOARD_ENABLED` | Active ou désactive le serveur web du dashboard | `true` | `true` |
 | `DASHBOARD_AUTH_ENABLED` | Active la page de connexion du dashboard | `true` | `false` |
 | `DASHBOARD_AUTH_USERNAME` | Nom d'utilisateur du dashboard | `admin` | vide |
-| `DASHBOARD_AUTH_PASSWORD` | Mot de passe du dashboard | `change-me` | vide |
+| `DASHBOARD_AUTH_PASSWORD_HASH` | Hash PBKDF2 du mot de passe du dashboard | `NM1$PBKDF2$SHA256$...` | vide |
+| `DASHBOARD_AUTH_PASSWORD_HASH_FILE` | Fichier secret contenant le hash du mot de passe dashboard | `/run/secrets/dashboard_password_hash` | vide |
+| `DASHBOARD_SESSION_HOURS` | Durée de session du dashboard en heures | `12` | `12` |
 | `DASHBOARD_REFRESH_SECONDS` | Intervalle de rafraîchissement automatique de l'interface web | `5` | `5` |
 | `DATA_DIR` | Répertoire de persistance (`state.json`, logs, config YAML par défaut) | `/data` | `.` |
 | `APP_VERSION` | Version affichée dans les logs/notifications | `1.5.0` | `inconnue` |
@@ -340,7 +372,8 @@ dashboard:
   enabled: true
   authEnabled: false
   authUsername: "admin"
-  authPassword: "change-me"
+  authPasswordHash: "NM1$PBKDF2$SHA256$600000$base64-sel$base64-hash"
+  sessionHours: 12
   refreshSeconds: 5
 
 pushover:
@@ -357,6 +390,15 @@ monitoring:
     - google.com:443
     - host: localhost
       port: 80
+  httpTargets:
+    - url: "https://example.com/health"
+      expectedStatusCode: 200
+      containsText: "OK"
+  dnsTargets:
+    - host: "example.com"
+      expectedAddress: "93.184.216.34"
+    - ip: "8.8.8.8"
+      expectedHost: "dns.google"
 ```
 
 ### Clés YAML supportées
@@ -370,7 +412,9 @@ monitoring:
 | `dashboard.enabled` | Active ou désactive le serveur web du dashboard |
 | `dashboard.authEnabled` | Active la page de connexion du dashboard |
 | `dashboard.authUsername` | Nom d'utilisateur du dashboard |
-| `dashboard.authPassword` | Mot de passe du dashboard |
+| `dashboard.authPasswordHash` | Hash PBKDF2 du mot de passe dashboard |
+| `dashboard.authPasswordHashFile` | Fichier secret contenant le hash du mot de passe dashboard |
+| `dashboard.sessionHours` | Durée de session du dashboard en heures |
 | `dashboard.refreshSeconds` | Intervalle de rafraîchissement de l'interface web |
 | `pushover.token` | Token Pushover |
 | `pushover.user` | Utilisateur/groupe Pushover |
@@ -378,6 +422,8 @@ monitoring:
 | `pushover.shutdownSound` | Son d'arrêt |
 | `monitoring.pingTargets` | Liste des IP surveillées |
 | `monitoring.tcpTargets` | Liste des endpoints TCP |
+| `monitoring.httpTargets` | Liste des endpoints HTTP/HTTPS |
+| `monitoring.dnsTargets` | Liste des checks DNS forward et reverse |
 
 Pour `tcpTargets`, les deux syntaxes suivantes sont acceptées :
 
@@ -386,6 +432,27 @@ tcpTargets:
   - google.com:443
   - host: localhost
     port: 80
+```
+
+Pour `httpTargets`, les syntaxes suivantes sont acceptées :
+
+```yaml
+httpTargets:
+  - https://example.com/health
+  - url: https://example.com/status
+    expectedStatusCode: 200
+    containsText: "OK"
+```
+
+Pour `dnsTargets`, les syntaxes suivantes sont acceptées :
+
+```yaml
+dnsTargets:
+  - example.com
+  - host: example.com
+    expectedAddress: 93.184.216.34
+  - ip: 8.8.8.8
+    expectedHost: dns.google
 ```
 
 ---
@@ -410,6 +477,24 @@ Pour une cible TCP :
 - au premier passage en panne, une notification `🔴 DOWN` est envoyée
 - si la panne dure plus de **5 minutes**, une notification `🚨 STILL DOWN` est envoyée en priorité urgente
 - dès qu'une connexion réussit, une notification `🟢 RECOVERY` est envoyée
+
+### HTTP / HTTPS
+
+Pour une cible HTTP/HTTPS :
+
+- un cycle effectue jusqu'à **3 tentatives**
+- le check peut valider le **code HTTP** et/ou un **texte attendu**
+- un `🔴 DOWN` est envoyé en cas d'échec durable
+- un `🟢 RECOVERY` est envoyé dès que l'endpoint redevient valide
+
+### DNS
+
+Pour une cible DNS :
+
+- un cycle effectue jusqu'à **3 tentatives**
+- le mode **forward** peut vérifier qu'un hostname retourne une **IP attendue**
+- le mode **reverse** peut vérifier qu'une **IP** retourne un **hostname attendu** via PTR
+- les notifications `DOWN`, `STILL DOWN` et `RECOVERY` sont gérées comme pour les autres moniteurs
 
 ### Snooze Pushover
 
@@ -455,6 +540,7 @@ Ce fichier stocke notamment :
 - l'état des moniteurs
 - la date de début d'incident
 - les snoozes actifs par cible
+- l'historique récent des incidents
 
 ### `logs/`
 
@@ -493,6 +579,8 @@ Exemple d'arborescence :
 ```powershell
 $env:PING_TARGETS="8.8.8.8,1.1.1.1"
 $env:TCP_TARGETS="google.com:443,localhost:22"
+$env:HTTP_TARGETS="https://example.com/health"
+$env:DNS_TARGETS="example.com"
 $env:SCHEDULE_INTERVAL_SECONDS="15"
 $env:DASHBOARD_REFRESH_SECONDS="5"
 $env:PUSHOVER_TOKEN="your-token"
@@ -543,11 +631,13 @@ docker run -d \
   -p 8080:8080 \
   -e PING_TARGETS="8.8.8.8,1.1.1.1" \
   -e TCP_TARGETS="google.com:443,192.168.1.10:22" \
+  -e HTTP_TARGETS="https://example.com/health" \
+  -e DNS_TARGETS="example.com" \
   -e SCHEDULE_CRON="*/3 * * * *" \
   -e DASHBOARD_REFRESH_SECONDS="5" \
   -e DASHBOARD_AUTH_ENABLED="true" \
   -e DASHBOARD_AUTH_USERNAME="admin" \
-  -e DASHBOARD_AUTH_PASSWORD="change-me" \
+  -e DASHBOARD_AUTH_PASSWORD_HASH="NM1$PBKDF2$SHA256$600000$base64-sel$base64-hash" \
   -e PUSHOVER_TOKEN="your-token" \
   -e PUSHOVER_USER="your-user" \
   -e PUSHOVER_STARTUP_SOUND="cosmic" \
@@ -586,9 +676,7 @@ cp .env.example .env
 ```yaml
 services:
   networkmonitor:
-    build:
-      context: .
-      dockerfile: NetworkMonitor/Dockerfile
+    image: ghcr.io/teddy57600/networkmonitor:latest
     container_name: networkmonitor
     restart: unless-stopped
     environment:
@@ -596,12 +684,14 @@ services:
       CONFIG_YAML_PATH: /config/config.yaml
       DASHBOARD_AUTH_ENABLED: "true"
       DASHBOARD_AUTH_USERNAME: "admin"
-      DASHBOARD_AUTH_PASSWORD: "change-me"
+      DASHBOARD_AUTH_PASSWORD_HASH_FILE: "/run/secrets/dashboard_password_hash"
     ports:
       - 8080:8080
     volumes:
       - ./config.yaml:/config/config.yaml
       - networkmonitor-data:/data
+    secrets:
+      - dashboard_password_hash
 
   watchtower:
     image: containrrr/watchtower:latest
@@ -613,6 +703,10 @@ services:
 
 volumes:
   networkmonitor-data:
+
+secrets:
+  dashboard_password_hash:
+    file: ./secrets/dashboard_password_hash.txt
 ```
 
 > Sous Docker, l'arrêt via `docker stop` envoie un `SIGTERM`. L'application intercepte ce signal pour effectuer un arrêt propre et envoyer la notification de fin.
@@ -652,7 +746,12 @@ Endpoints utiles :
 
 - `GET /api/dashboard` : snapshot complet du dashboard
 - `GET /api/health` : endpoint de santé simple
+- `GET /api/config/raw` : retourne le YAML chargé et son chemin
+- `GET /api/config/export` : exporte la configuration YAML courante
+- `POST /api/config/raw` : remplace complètement la configuration YAML
+- `POST /api/config/import` : importe un fichier YAML
 - `POST /api/actions/check-now` : demande un cycle de vérification immédiat
+- `POST /api/actions/snooze?key=...` : active un snooze sur un moniteur
 - `POST /api/actions/clear-snooze?key=...` : supprime le snooze d'un moniteur
 - `POST /api/actions/add-ping?target=...` : ajoute une cible Ping au YAML
 - `POST /api/actions/add-tcp?host=...&port=...` : ajoute un test TCP au YAML
@@ -662,11 +761,16 @@ Endpoints utiles :
 Le dashboard affiche notamment :
 
 - les compteurs globaux UP / DOWN / snoozés
-- les moniteurs Ping et TCP
+- les moniteurs Ping, TCP, HTTP et DNS
 - la date du dernier contrôle, du dernier succès et du dernier échec
 - la durée du dernier test
 - l'état du circuit breaker
 - la fin éventuelle du snooze
+- l'historique récent des incidents
+- des filtres, une recherche et un tri sur les moniteurs
+- des filtres et une recherche sur l'historique des incidents
+- un mode sombre / clair mémorisé côté navigateur
+- l'édition, l'import et l'export du YAML
 - des formulaires pour ajouter rapidement des cibles Ping et TCP
 - des boutons pour supprimer rapidement des cibles gérées par le YAML
 
@@ -686,6 +790,7 @@ dashboard:
   authEnabled: true
   authUsername: "admin"
   authPasswordHash: "NM1$PBKDF2$SHA256$600000$base64-sel$base64-hash"
+  sessionHours: 12
   refreshSeconds: 5
 ```
 
@@ -694,6 +799,7 @@ Quand elle est activée :
 - l'utilisateur arrive d'abord sur une page de connexion dédiée
 - après authentification, une session web est conservée via cookie
 - les routes du dashboard et les API associées sont protégées
+- les connexions réussies, les échecs d'authentification et les déconnexions sont journalisés
 
 > Recommandation : si le dashboard est exposé hors du réseau local, placez-le derrière **HTTPS** ou un **reverse proxy** (Nginx, Traefik, Caddy). Même avec une page de connexion, un trafic HTTP non chiffré reste à éviter.
 
@@ -803,6 +909,7 @@ Au démarrage et pendant l'exécution, l'application journalise notamment :
 - la description de la planification active
 - les événements `DOWN`, `STILL DOWN` et `RECOVERY`
 - les rechargements de configuration YAML
+- les connexions, échecs d'authentification et déconnexions du dashboard
 - les périodes de snooze
 - les erreurs d'envoi de notifications
 - les erreurs de lecture/écriture de `state.json`
@@ -813,6 +920,8 @@ Au démarrage et pendant l'exécution, l'application journalise notamment :
 
 - si aucune cible ping n'est configurée, l'application démarre avec avertissement
 - si aucune cible TCP n'est configurée, l'application démarre aussi avec avertissement
+- si aucune cible HTTP n'est configurée, l'application démarre aussi avec avertissement
+- si aucune cible DNS n'est configurée, l'application démarre aussi avec avertissement
 - sans `PUSHOVER_TOKEN` et `PUSHOVER_USER`, les notifications échoueront
 - `DATA_DIR` doit être persistant en environnement conteneurisé
 - `state.json` est compatible avec l'exécution AOT grâce à la sérialisation source-generated
@@ -847,6 +956,8 @@ dotnet publish NetworkMonitor/NetworkMonitor.csproj -c Release
 - supervision basique d'équipements réseau internes
 - vérification de disponibilité Internet ou DNS publics
 - contrôle d'ouverture de ports critiques
+- vérification d'URLs web ou d'API via HTTP/HTTPS
+- validation d'enregistrements DNS forward et reverse DNS
 - surveillance légère de services auto-hébergés
 - alerting simple sans stack de supervision lourde
 
@@ -879,4 +990,6 @@ Aucune licence n'est actuellement documentée dans le dépôt.
 - des alertes Pushover utiles
 - un snooze intelligent par cible
 - une configuration YAML rechargeable à chaud
+- un dashboard web riche avec édition YAML
+- des checks Ping, TCP, HTTP/HTTPS et DNS
 - une exécution fiable en local ou dans Docker

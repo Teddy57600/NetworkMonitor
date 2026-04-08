@@ -145,7 +145,104 @@
                     </div>
                     <button type="submit" class="action-button primary">Ajouter un test TCP</button>
                 </form>
+
+                <form id="httpTargetForm" class="inline-form">
+                    <div class="field-group grow">
+                        <label for="httpUrlInput">URL HTTP/HTTPS</label>
+                        <input id="httpUrlInput" name="url" type="url" placeholder="https://example.com/health" required />
+                    </div>
+                    <div class="field-group small">
+                        <label for="httpStatusCodeInput">Code attendu</label>
+                        <input id="httpStatusCodeInput" name="expectedStatusCode" type="number" min="100" max="599" placeholder="200" />
+                    </div>
+                    <div class="field-group grow">
+                        <label for="httpContainsTextInput">Texte attendu</label>
+                        <input id="httpContainsTextInput" name="containsText" type="text" placeholder="ex: OK" />
+                    </div>
+                    <button type="submit" class="action-button primary">Ajouter un test HTTP</button>
+                </form>
+
+                <form id="dnsTargetForm" class="inline-form">
+                    <div class="field-group grow">
+                        <label for="dnsHostInput">Nom de domaine</label>
+                        <input id="dnsHostInput" name="host" type="text" placeholder="example.com" required />
+                    </div>
+                    <div class="field-group grow">
+                        <label for="dnsExpectedAddressInput">IP attendue</label>
+                        <input id="dnsExpectedAddressInput" name="expectedAddress" type="text" placeholder="93.184.216.34" />
+                    </div>
+                    <button type="submit" class="action-button primary">Ajouter un test DNS</button>
+                </form>
+
+                <form id="dnsReverseTargetForm" class="inline-form">
+                    <div class="field-group grow">
+                        <label for="dnsReverseIpInput">IP à résoudre en PTR</label>
+                        <input id="dnsReverseIpInput" name="ip" type="text" placeholder="8.8.8.8" required />
+                    </div>
+                    <div class="field-group grow">
+                        <label for="dnsExpectedHostInput">Nom attendu</label>
+                        <input id="dnsExpectedHostInput" name="expectedHost" type="text" placeholder="dns.google" />
+                    </div>
+                    <button type="submit" class="action-button primary">Ajouter un reverse DNS</button>
+                </form>
             </article>
+            <article class="panel">
+                <div class="panel-title">Filtres des moniteurs</div>
+                <div class="incident-filters">
+                    <div class="field-group compact">
+                        <label for="monitorStatusFilter">Statut</label>
+                        <select id="monitorStatusFilter" name="monitorStatusFilter">
+                            <option value="all">Tous</option>
+                            <option value="down">DOWN</option>
+                            <option value="up">UP</option>
+                            <option value="snoozed">Snoozés</option>
+                        </select>
+                    </div>
+                    <div class="field-group compact">
+                        <label for="monitorSourceFilter">Source</label>
+                        <select id="monitorSourceFilter" name="monitorSourceFilter">
+                            <option value="all">Toutes</option>
+                            <option value="ENV">ENV</option>
+                            <option value="YAML">YAML</option>
+                            <option value="ENV + YAML">ENV + YAML</option>
+                        </select>
+                    </div>
+                    <div class="field-group compact">
+                        <label for="monitorSortSelect">Tri</label>
+                        <select id="monitorSortSelect" name="monitorSortSelect">
+                            <option value="state">État</option>
+                            <option value="name">Nom</option>
+                            <option value="downtime">Durée d'indispo</option>
+                            <option value="source">Source</option>
+                        </select>
+                    </div>
+                    <div class="field-group compact grow">
+                        <label for="monitorSearchInput">Recherche</label>
+                        <input id="monitorSearchInput" name="monitorSearchInput" type="search" placeholder="Filtrer par nom, type ou source" />
+                    </div>
+                </div>
+            </article>
+        </section>
+
+        <section class="panel">
+            <div class="panel-header">
+                <div>
+                    <h2>Édition complète du YAML</h2>
+                    <p>Modifier, importer ou exporter la configuration surveillée.</p>
+                </div>
+                <a class="action-button ghost" href="/api/config/export">Exporter</a>
+            </div>
+            <div class="incident-filters">
+                <button id="reloadConfigButton" type="button" class="action-button ghost">Recharger</button>
+                <button id="saveConfigButton" type="button" class="action-button primary">Enregistrer le YAML</button>
+                <label class="action-button ghost file-button" for="configImportInput">Importer un fichier</label>
+                <input id="configImportInput" type="file" accept=".yaml,.yml,text/yaml,text/plain" hidden />
+                <span id="configPathDisplay" class="badge badge-muted">--</span>
+            </div>
+            <div class="field-group">
+                <label for="configEditor">Configuration YAML</label>
+                <textarea id="configEditor" class="config-editor" spellcheck="false"></textarea>
+            </div>
         </section>
 
         <section class="panel">
@@ -166,6 +263,26 @@
                 </div>
             </div>
             <div id="tcpMonitors" class="cards-grid"></div>
+        </section>
+
+        <section class="panel">
+            <div class="panel-header">
+                <div>
+                    <h2>Moniteurs HTTP</h2>
+                    <p>Disponibilité des endpoints HTTP/HTTPS</p>
+                </div>
+            </div>
+            <div id="httpMonitors" class="cards-grid"></div>
+        </section>
+
+        <section class="panel">
+            <div class="panel-header">
+                <div>
+                    <h2>Moniteurs DNS</h2>
+                    <p>Résolution des hôtes DNS</p>
+                </div>
+            </div>
+            <div id="dnsMonitors" class="cards-grid"></div>
         </section>
 
         <section class="panel">
