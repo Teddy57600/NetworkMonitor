@@ -301,6 +301,60 @@ function filterIncidents(incidents) {
             }
         }
 
+async function generatePasswordHash() {
+    const button = document.getElementById('passwordHashButton');
+    const input = document.getElementById('passwordHashInput');
+    const output = document.getElementById('passwordHashOutput');
+    const password = input.value;
+    if (!password) {
+        setActionStatus('Le texte à hasher est obligatoire.', true);
+        return;
+    }
+
+    button.disabled = true;
+    setActionStatus('Génération du hash en cours...');
+
+    try {
+        const formData = new FormData();
+        formData.append('password', password);
+
+        const response = await fetch('/api/auth/hash-password', {
+            method: 'POST',
+            body: formData
+        });
+
+        const payload = await response.json();
+        if (!response.ok || payload.success === false) {
+            throw new Error(payload.message ?? `HTTP ${response.status}`);
+        }
+
+        output.value = payload.hash ?? '';
+        setActionStatus(payload.message);
+    }
+    catch (error) {
+        setActionStatus(`Échec de la génération du hash : ${error.message}`, true);
+    }
+    finally {
+        button.disabled = false;
+    }
+}
+
+async function copyPasswordHash() {
+    const output = document.getElementById('passwordHashOutput');
+    if (!output.value) {
+        setActionStatus('Aucun hash à copier.', true);
+        return;
+    }
+
+    try {
+        await navigator.clipboard.writeText(output.value);
+        setActionStatus('Hash copié dans le presse-papiers.');
+    }
+    catch (error) {
+        setActionStatus(`Impossible de copier le hash : ${error.message}`, true);
+    }
+}
+
         if (filters.types.length > 0 && !filters.types.includes(incident.type)) {
             return false;
         }
@@ -1123,6 +1177,62 @@ async function importConfigFile(event) {
     }
 }
 
+async function generatePasswordHash(event) {
+    event.preventDefault();
+
+    const button = document.getElementById('passwordHashButton');
+    const input = document.getElementById('passwordHashInput');
+    const output = document.getElementById('passwordHashOutput');
+    const password = input.value;
+    if (!password) {
+        setActionStatus('Le texte à hasher est obligatoire.', true);
+        return;
+    }
+
+    button.disabled = true;
+    setActionStatus('Génération du hash en cours...');
+
+    try {
+        const formData = new FormData();
+        formData.append('password', password);
+
+        const response = await fetch('/api/auth/hash-password', {
+            method: 'POST',
+            body: formData
+        });
+
+        const payload = await response.json();
+        if (!response.ok || payload.success === false) {
+            throw new Error(payload.message ?? `HTTP ${response.status}`);
+        }
+
+        output.value = payload.hash ?? '';
+        setActionStatus(payload.message);
+    }
+    catch (error) {
+        setActionStatus(`Échec de la génération du hash : ${error.message}`, true);
+    }
+    finally {
+        button.disabled = false;
+    }
+}
+
+async function copyPasswordHash() {
+    const output = document.getElementById('passwordHashOutput');
+    if (!output.value) {
+        setActionStatus('Aucun hash à copier.', true);
+        return;
+    }
+
+    try {
+        await navigator.clipboard.writeText(output.value);
+        setActionStatus('Hash copié dans le presse-papiers.');
+    }
+    catch (error) {
+        setActionStatus(`Impossible de copier le hash : ${error.message}`, true);
+    }
+}
+
 function renderMonitorList(containerId, monitors) {
     const container = document.getElementById(containerId);
     const panel = container.closest('.panel');
@@ -1319,6 +1429,16 @@ document.getElementById('incidentSearchInput').addEventListener('input', () => r
 document.getElementById('saveConfigButton').addEventListener('click', saveConfigEditor);
 document.getElementById('reloadConfigButton').addEventListener('click', loadConfigEditor);
 document.getElementById('configImportInput').addEventListener('change', importConfigFile);
+document.getElementById('passwordHashButton').addEventListener('click', generatePasswordHash);
+document.getElementById('passwordHashInput').addEventListener('keydown', event => {
+    if (event.key !== 'Enter') {
+        return;
+    }
+
+    event.preventDefault();
+    generatePasswordHash();
+});
+document.getElementById('copyPasswordHashButton').addEventListener('click', copyPasswordHash);
 document.getElementById('monitorSortSelect').addEventListener('change', rerenderMonitorLists);
 document.getElementById('monitorSearchInput').addEventListener('input', rerenderMonitorLists);
 initializeMultiSelectFilters();

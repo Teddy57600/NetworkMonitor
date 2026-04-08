@@ -34,6 +34,13 @@ sealed class DashboardConfigDocument
     public string Content { get; init; } = string.Empty;
 }
 
+sealed class DashboardPasswordHashResponse
+{
+    public bool Success { get; init; }
+    public string Message { get; init; } = string.Empty;
+    public string Hash { get; init; } = string.Empty;
+}
+
 sealed class DashboardSummary
 {
     public int Total { get; init; }
@@ -77,6 +84,7 @@ sealed class DashboardIncidentSnapshot
 [JsonSerializable(typeof(DashboardSummary))]
 [JsonSerializable(typeof(DashboardActionResponse))]
 [JsonSerializable(typeof(DashboardConfigDocument))]
+[JsonSerializable(typeof(DashboardPasswordHashResponse))]
 [JsonSerializable(typeof(DashboardMonitorSnapshot[]))]
 [JsonSerializable(typeof(DashboardIncidentSnapshot[]))]
 internal partial class DashboardJsonContext : JsonSerializerContext

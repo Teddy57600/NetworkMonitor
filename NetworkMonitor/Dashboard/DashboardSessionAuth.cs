@@ -11,6 +11,19 @@ static class DashboardSessionAuth
     public const string SessionCookieName = "networkmonitor-dashboard-session";
     private static readonly ConcurrentDictionary<string, DateTimeOffset> Sessions = new(StringComparer.Ordinal);
     private const string PasswordHashPrefix = "NM1$PBKDF2$SHA256$";
+    private const int PasswordHashIterations = 600000;
+    private const int PasswordSaltSize = 16;
+    private const int PasswordHashSize = 32;
+
+    public static string HashPassword(string password)
+    {
+        ArgumentNullException.ThrowIfNull(password);
+
+        var salt = RandomNumberGenerator.GetBytes(PasswordSaltSize);
+        var hash = Rfc2898DeriveBytes.Pbkdf2(password, salt, PasswordHashIterations, HashAlgorithmName.SHA256, PasswordHashSize);
+
+        return $"{PasswordHashPrefix}{PasswordHashIterations}${Convert.ToBase64String(salt)}${Convert.ToBase64String(hash)}";
+    }
 
     public static bool ValidateCredentials(AppConfig config, string username, string password)
     {

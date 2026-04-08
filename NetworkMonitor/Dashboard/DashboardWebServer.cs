@@ -199,6 +199,33 @@ static class DashboardWebServer
             return Results.File(System.Text.Encoding.UTF8.GetBytes(content), "application/x-yaml", "config.yaml");
         });
 
+        app.MapPost("/api/auth/hash-password", async Task<IResult> (HttpContext context) =>
+        {
+            var form = await context.Request.ReadFormAsync(context.RequestAborted);
+            var password = form["password"].ToString();
+            if (string.IsNullOrWhiteSpace(password))
+            {
+                var invalid = new DashboardPasswordHashResponse
+                {
+                    Success = false,
+                    Message = "Le texte à hasher est obligatoire."
+                };
+
+                var invalidJson = JsonSerializer.Serialize(invalid, typeof(DashboardPasswordHashResponse), DashboardJsonContext.Default);
+                return Results.Text(invalidJson, "application/json", statusCode: StatusCodes.Status400BadRequest);
+            }
+
+            var response = new DashboardPasswordHashResponse
+            {
+                Success = true,
+                Message = "Hash généré avec succès.",
+                Hash = DashboardSessionAuth.HashPassword(password)
+            };
+
+            var json = JsonSerializer.Serialize(response, typeof(DashboardPasswordHashResponse), DashboardJsonContext.Default);
+            return Results.Text(json, "application/json");
+        });
+
         app.MapPost("/api/actions/check-now", () =>
         {
             manualCheckTrigger.Request();

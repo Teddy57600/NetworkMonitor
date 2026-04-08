@@ -568,6 +568,10 @@ body {
     color: #0f172a;
 }
 
+.hash-output {
+    min-height: 120px;
+}
+
 .field-hint {
     color: var(--muted);
     font-size: .88rem;

@@ -303,6 +303,28 @@
                         <textarea id="configEditor" class="config-editor" spellcheck="false"></textarea>
                     </div>
                 </section>
+
+                <section class="panel">
+                    <div class="panel-header">
+                        <div>
+                            <h2>Hash password</h2>
+                            <p>Génère un hash compatible avec <code>authPasswordHash</code>.</p>
+                        </div>
+                    </div>
+                    <div id="passwordHashForm" class="inline-form">
+                        <div class="field-group grow">
+                            <label for="passwordHashInput">Texte à hasher</label>
+                            <input id="passwordHashInput" name="passwordHashInput" type="password" placeholder="Saisir un mot de passe" required />
+                        </div>
+                        <button id="passwordHashButton" type="button" class="action-button primary">Générer le hash</button>
+                        <button id="copyPasswordHashButton" type="button" class="action-button ghost">Copier</button>
+                    </div>
+                    <div class="field-group">
+                        <label for="passwordHashOutput">Hash généré</label>
+                        <textarea id="passwordHashOutput" class="config-editor hash-output" spellcheck="false" readonly></textarea>
+                        <span class="field-hint">Format généré : PBKDF2 SHA256 compatible avec l’authentification du dashboard.</span>
+                    </div>
+                </section>
             </div>
         </section>
 
