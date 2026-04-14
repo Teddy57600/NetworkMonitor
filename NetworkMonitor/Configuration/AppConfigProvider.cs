@@ -1017,7 +1017,7 @@ static class AppConfigProvider
     {
         return environmentTargets
             .Concat(yamlTargets)
-            .GroupBy(target => target.Host, StringComparer.OrdinalIgnoreCase)
+            .GroupBy(target => string.IsNullOrWhiteSpace(target.ReverseLookupIp) ? $"host:{target.Host}" : $"ip:{target.ReverseLookupIp}", StringComparer.OrdinalIgnoreCase)
             .Select(group => group.First())
             .ToArray();
     }

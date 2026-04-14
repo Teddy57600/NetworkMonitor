@@ -64,6 +64,7 @@ Le projet cible **.NET 11** et active la **publication Native AOT**.
 - vérification qu'un **nom de domaine** résout correctement
 - possibilité de vérifier une **adresse IP attendue**
 - possibilité de vérifier le **reverse DNS / PTR** d'une IP vers un hostname attendu
+- chaque entrée DNS est suivie individuellement : **forward par nom d'hôte**, **reverse par adresse IP**
 
 ### Alertes Pushover
 - notification `🔴 DOWN`
@@ -922,6 +923,7 @@ Au démarrage et pendant l'exécution, l'application journalise notamment :
 
 - la version applicative
 - la description de la planification active
+- la liste détaillée des checks DNS actifs (forward et PTR)
 - les événements `DOWN`, `STILL DOWN` et `RECOVERY`
 - les rechargements de configuration YAML
 - les connexions, échecs d'authentification et déconnexions du dashboard

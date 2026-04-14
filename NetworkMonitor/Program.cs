@@ -283,7 +283,7 @@ internal class Program
     private static Dictionary<string, DnsMonitorState> CreateDnsMonitors(IReadOnlyList<DnsTargetConfig> targets, ILoggerFactory loggerFactory)
     {
         return targets.ToDictionary(
-            target => target.Host,
+            BuildDnsKey,
             target => new DnsMonitorState(target, loggerFactory.CreateLogger<DnsMonitorState>()),
             StringComparer.OrdinalIgnoreCase);
     }
@@ -356,7 +356,7 @@ internal class Program
 
     private static void SyncDnsMonitors(Dictionary<string, DnsMonitorState> monitors, IReadOnlyList<DnsTargetConfig> configuredTargets, ILoggerFactory loggerFactory, ILogger logger)
     {
-        var desiredTargets = configuredTargets.ToDictionary(target => target.Host, StringComparer.OrdinalIgnoreCase);
+        var desiredTargets = configuredTargets.ToDictionary(BuildDnsKey, StringComparer.OrdinalIgnoreCase);
 
         foreach (var key in monitors.Keys.Except(desiredTargets.Keys, StringComparer.OrdinalIgnoreCase).ToArray())
         {
@@ -444,6 +444,23 @@ internal class Program
             config.HttpTargets.Count,
             config.DnsTargets.Count,
             BuildSchedule(config).Description);
+
+        foreach (var dnsTarget in config.DnsTargets.OrderBy(GetDnsTargetLogName, StringComparer.OrdinalIgnoreCase))
+        {
+            if (!string.IsNullOrWhiteSpace(dnsTarget.ReverseLookupIp))
+            {
+                logger.LogInformation(
+                    "Monitor DNS actif — PTR {Ip} → {HostName}",
+                    dnsTarget.ReverseLookupIp,
+                    string.IsNullOrWhiteSpace(dnsTarget.ExpectedHost) ? "<tout hostname>" : dnsTarget.ExpectedHost);
+                continue;
+            }
+
+            logger.LogInformation(
+                "Monitor DNS actif — {Host} → {ExpectedAddress}",
+                dnsTarget.Host,
+                string.IsNullOrWhiteSpace(dnsTarget.ExpectedAddress) ? "<toute adresse>" : dnsTarget.ExpectedAddress);
+        }
     }
 
     private static string BuildLifecycleMessage(string status, string version, string scheduleDescription, int pingCount, int tcpCount, int httpCount, int dnsCount, string? shutdownReason = null)
@@ -456,6 +473,14 @@ internal class Program
     }
 
     private static string BuildTcpKey(string host, int port) => $"{host}:{port}";
+
+    private static string BuildDnsKey(DnsTargetConfig target) => !string.IsNullOrWhiteSpace(target.ReverseLookupIp)
+        ? $"PTR:{target.ReverseLookupIp}"
+        : $"A:{target.Host}";
+
+    private static string GetDnsTargetLogName(DnsTargetConfig target) => !string.IsNullOrWhiteSpace(target.ReverseLookupIp)
+        ? target.ReverseLookupIp!
+        : target.Host;
 
     private static PosixSignalRegistration? RegisterShutdownSignal(PosixSignal signal, string reason, CancellationTokenSource cts, ILogger logger, Action<string> setShutdownReason)
     {
