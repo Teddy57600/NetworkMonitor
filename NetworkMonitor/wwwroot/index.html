@@ -211,6 +211,26 @@
                     </div>
                     <div id="dnsMonitors" class="cards-grid"></div>
                 </section>
+
+                <section class="panel">
+                    <div class="panel-header">
+                        <div>
+                            <h2>Moniteurs TLS</h2>
+                            <p>Validité des certificats TLS et dates d’expiration</p>
+                        </div>
+                    </div>
+                    <div id="tlsMonitors" class="cards-grid"></div>
+                </section>
+
+                <section class="panel">
+                    <div class="panel-header">
+                        <div>
+                            <h2>Moniteurs DNS Record</h2>
+                            <p>Validation des enregistrements MX, TXT, CNAME et NS</p>
+                        </div>
+                    </div>
+                    <div id="dnsRecordMonitors" class="cards-grid"></div>
+                </section>
             </div>
         </section>
 
@@ -279,6 +299,52 @@
                                 <input id="dnsExpectedHostInput" name="expectedHost" type="text" placeholder="dns.google" />
                             </div>
                             <button type="submit" class="action-button primary">Ajouter un reverse DNS</button>
+                        </form>
+
+                        <form id="tlsTargetForm" class="inline-form">
+                            <div class="field-group grow">
+                                <label for="tlsHostInput">Hôte TLS</label>
+                                <input id="tlsHostInput" name="host" type="text" placeholder="monitor.tal.pm" required />
+                            </div>
+                            <div class="field-group small">
+                                <label for="tlsPortInput">Port</label>
+                                <input id="tlsPortInput" name="port" type="number" min="1" max="65535" placeholder="443" required />
+                            </div>
+                            <div class="field-group grow">
+                                <label for="tlsExpectedHostInput">Hostname attendu</label>
+                                <input id="tlsExpectedHostInput" name="expectedHost" type="text" placeholder="monitor.tal.pm" />
+                            </div>
+                            <div class="field-group small">
+                                <label for="tlsWarningDaysInput">Alerte avant expiration</label>
+                                <input id="tlsWarningDaysInput" name="warningDays" type="number" min="1" placeholder="30" />
+                            </div>
+                            <button type="submit" class="action-button primary">Ajouter un check TLS</button>
+                        </form>
+
+                        <form id="dnsRecordTargetForm" class="inline-form">
+                            <div class="field-group grow">
+                                <label for="dnsRecordHostInput">Hôte DNS</label>
+                                <input id="dnsRecordHostInput" name="host" type="text" placeholder="example.com" required />
+                            </div>
+                            <div class="field-group small">
+                                <label for="dnsRecordTypeInput">Type</label>
+                                <select id="dnsRecordTypeInput" name="recordType">
+                                    <option value="MX">MX</option>
+                                    <option value="TXT">TXT</option>
+                                    <option value="CNAME">CNAME</option>
+                                    <option value="NS">NS</option>
+                                    <option value="SRV">SRV</option>
+                                </select>
+                            </div>
+                            <div class="field-group grow">
+                                <label for="dnsRecordExpectedValueInput">Valeur attendue</label>
+                                <input id="dnsRecordExpectedValueInput" name="expectedValue" type="text" placeholder="mail.example.com" />
+                            </div>
+                            <div class="field-group grow">
+                                <label for="dnsRecordContainsTextInput">Texte attendu</label>
+                                <input id="dnsRecordContainsTextInput" name="containsText" type="text" placeholder="v=spf1" />
+                            </div>
+                            <button type="submit" class="action-button primary">Ajouter un DNS record</button>
                         </form>
                     </article>
                 </section>

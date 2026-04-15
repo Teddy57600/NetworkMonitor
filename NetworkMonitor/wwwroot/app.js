@@ -12,7 +12,9 @@ let lastDashboardData = {
     pingMonitors: [],
     tcpMonitors: [],
     httpMonitors: [],
-    dnsMonitors: []
+    dnsMonitors: [],
+    tlsMonitors: [],
+    dnsRecordMonitors: []
 };
 const multiSelectFilters = new Map();
 
@@ -172,7 +174,9 @@ function updateMonitorFilterOptions() {
         ...lastDashboardData.pingMonitors,
         ...lastDashboardData.tcpMonitors,
         ...lastDashboardData.httpMonitors,
-        ...lastDashboardData.dnsMonitors
+        ...lastDashboardData.dnsMonitors,
+        ...lastDashboardData.tlsMonitors,
+        ...lastDashboardData.dnsRecordMonitors
     ];
 
     const statusCounts = new Map([
@@ -198,7 +202,9 @@ function updateMonitorFilterOptions() {
         { value: 'Ping', label: buildOptionLabel('Ping', typeCounts.get('Ping') ?? 0) },
         { value: 'TCP', label: buildOptionLabel('TCP', typeCounts.get('TCP') ?? 0) },
         { value: 'HTTP', label: buildOptionLabel('HTTP', typeCounts.get('HTTP') ?? 0) },
-        { value: 'DNS', label: buildOptionLabel('DNS', typeCounts.get('DNS') ?? 0) }
+        { value: 'DNS', label: buildOptionLabel('DNS', typeCounts.get('DNS') ?? 0) },
+        { value: 'TLS', label: buildOptionLabel('TLS', typeCounts.get('TLS') ?? 0) },
+        { value: 'DNS Record', label: buildOptionLabel('DNS Record', typeCounts.get('DNS Record') ?? 0) }
     ]);
 }
 
@@ -301,6 +307,134 @@ function filterIncidents(incidents) {
             }
         }
 
+async function addDnsRecordTarget(event) {
+    event.preventDefault();
+
+    const form = event.currentTarget;
+    const button = form.querySelector('button[type="submit"]');
+    const host = document.getElementById('dnsRecordHostInput').value.trim();
+    const recordType = document.getElementById('dnsRecordTypeInput').value;
+    const expectedValue = document.getElementById('dnsRecordExpectedValueInput').value.trim();
+    const containsText = document.getElementById('dnsRecordContainsTextInput').value.trim();
+
+    if (!host || !recordType) {
+        setActionStatus('L’hôte DNS et le type d’enregistrement sont obligatoires.', true);
+        return;
+    }
+
+    button.disabled = true;
+    setActionStatus(`Ajout du check DNS record ${recordType} ${host}...`);
+
+    try {
+        const expectedValueQuery = expectedValue ? `&expectedValue=${encodeURIComponent(expectedValue)}` : '';
+        const containsTextQuery = containsText ? `&containsText=${encodeURIComponent(containsText)}` : '';
+        const payload = await postAction(`/api/actions/add-dns-record?host=${encodeURIComponent(host)}&recordType=${encodeURIComponent(recordType)}${expectedValueQuery}${containsTextQuery}`);
+        setActionStatus(payload.message);
+        form.reset();
+        document.getElementById('dnsRecordTypeInput').value = 'MX';
+        await refresh();
+    }
+    catch (error) {
+        setActionStatus(`Échec de l'ajout du check DNS record : ${error.message}`, true);
+    }
+    finally {
+        button.disabled = false;
+    }
+}
+
+async function removeDnsRecordTarget(monitor, button) {
+    if (!window.confirm(`Supprimer le check DNS record '${monitor.displayName}' du fichier YAML ?`)) {
+        return;
+    }
+
+    button.disabled = true;
+    setActionStatus(`Suppression du check DNS record ${monitor.displayName}...`);
+
+    try {
+        const expectedValueQuery = monitor.jsonValue ? `&expectedValue=${encodeURIComponent(monitor.jsonValue)}` : '';
+        const containsTextQuery = monitor.failureReason ? `&containsText=${encodeURIComponent(monitor.failureReason)}` : '';
+        const payload = await postAction(`/api/actions/remove-dns-record?host=${encodeURIComponent(monitor.hostName ?? '')}&recordType=${encodeURIComponent(monitor.recordType ?? monitor.displayName.split(' ')[0])}${expectedValueQuery}${containsTextQuery}`);
+        setActionStatus(payload.message);
+        await refresh();
+    }
+    catch (error) {
+        setActionStatus(`Échec de la suppression du check DNS record : ${error.message}`, true);
+    }
+    finally {
+        button.disabled = false;
+    }
+}
+
+async function addTlsTarget(event) {
+    event.preventDefault();
+
+    const form = event.currentTarget;
+    const button = form.querySelector('button[type="submit"]');
+    const host = document.getElementById('tlsHostInput').value.trim();
+    const port = Number(document.getElementById('tlsPortInput').value);
+    const expectedHost = document.getElementById('tlsExpectedHostInput').value.trim();
+    const warningDaysRaw = document.getElementById('tlsWarningDaysInput').value.trim();
+
+    if (!host || !Number.isInteger(port) || port <= 0) {
+        setActionStatus('L’hôte TLS et un port valide sont obligatoires.', true);
+        return;
+    }
+
+    const warningDays = warningDaysRaw ? Number(warningDaysRaw) : null;
+    if (warningDaysRaw && (!Number.isInteger(warningDays) || warningDays <= 0)) {
+        setActionStatus('Le nombre de jours d’alerte TLS doit être un entier positif.', true);
+        return;
+    }
+
+    button.disabled = true;
+    setActionStatus(`Ajout du check TLS ${host}:${port}...`);
+
+    try {
+        const expectedHostQuery = expectedHost ? `&expectedHost=${encodeURIComponent(expectedHost)}` : '';
+        const warningDaysQuery = warningDays === null ? '' : `&warningDays=${warningDays}`;
+        const payload = await postAction(`/api/actions/add-tls?host=${encodeURIComponent(host)}&port=${port}${expectedHostQuery}${warningDaysQuery}`);
+        setActionStatus(payload.message);
+        form.reset();
+        await refresh();
+    }
+    catch (error) {
+        setActionStatus(`Échec de l'ajout du check TLS : ${error.message}`, true);
+    }
+    finally {
+        button.disabled = false;
+    }
+}
+
+async function removeTlsTarget(key, button) {
+    if (!window.confirm(`Supprimer le check TLS '${key}' du fichier YAML ?`)) {
+        return;
+    }
+
+    const separatorIndex = key.lastIndexOf(':');
+    if (separatorIndex <= 0) {
+        setActionStatus(`Clé TLS invalide : ${key}`, true);
+        return;
+    }
+
+    const host = key.slice(0, separatorIndex);
+    const port = Number(key.slice(separatorIndex + 1));
+
+    button.disabled = true;
+    setActionStatus(`Suppression du check TLS ${key}...`);
+
+    try {
+        const payload = await postAction(`/api/actions/remove-tls?host=${encodeURIComponent(host)}&port=${port}`);
+        setActionStatus(payload.message);
+        await refresh();
+    }
+    catch (error) {
+        setActionStatus(`Échec de la suppression du check TLS : ${error.message}`, true);
+    }
+    finally {
+        button.disabled = false;
+    }
+}
+
 async function generatePasswordHash() {
     const button = document.getElementById('passwordHashButton');
     const input = document.getElementById('passwordHashInput');
@@ -373,6 +507,7 @@ function rerenderMonitorLists() {
     renderMonitorList('tcpMonitors', lastDashboardData.tcpMonitors);
     renderMonitorList('httpMonitors', lastDashboardData.httpMonitors);
     renderMonitorList('dnsMonitors', lastDashboardData.dnsMonitors);
+    renderMonitorList('tlsMonitors', lastDashboardData.tlsMonitors);
 }
 
 function initializeTabs() {
@@ -1268,7 +1403,7 @@ function renderMonitorList(containerId, monitors) {
 
         const state = node.querySelector('.monitor-state');
         state.textContent = monitor.status;
-        state.classList.add(monitor.isDown ? 'down' : 'up');
+        state.classList.add(monitor.isDown ? 'down' : monitor.isWarning ? 'warning' : 'up');
         if (monitor.snoozeUntil) {
             state.classList.add('snoozed');
             state.textContent += ' • snooze';
@@ -1311,6 +1446,16 @@ function renderMonitorList(containerId, monitors) {
                     return;
                 }
 
+                if (monitor.type === 'TLS') {
+                    removeTlsTarget(monitor.displayName, removeButton);
+                    return;
+                }
+
+                if (monitor.type === 'DNS Record') {
+                    removeDnsRecordTarget(monitor, removeButton);
+                    return;
+                }
+
                 removePingTarget(monitor.key, removeButton);
             });
             actions.appendChild(removeButton);
@@ -1328,6 +1473,20 @@ function renderMonitorList(containerId, monitors) {
         const meta = node.querySelector('.monitor-meta');
         const rows = [
             ...(monitor.type === 'DNS' && monitor.hostName ? [['Nom d’hôte', monitor.hostName]] : []),
+            ...(monitor.type === 'TLS' && monitor.hostName ? [['Hostname attendu', monitor.hostName]] : []),
+            ...(monitor.type === 'TLS' && monitor.certificateSubject ? [['Sujet certificat', monitor.certificateSubject]] : []),
+            ...(monitor.type === 'TLS' && monitor.certificateIssuer ? [['Émetteur certificat', monitor.certificateIssuer]] : []),
+            ...(monitor.type === 'TLS' && monitor.certificateNotAfter ? [['Expiration certificat', formatDate(monitor.certificateNotAfter)]] : []),
+            ...(monitor.type === 'TLS' && monitor.daysRemaining !== null && monitor.daysRemaining !== undefined ? [['Jours restants', `${monitor.daysRemaining} jour(s)`]] : []),
+            ...(monitor.type === 'HTTP' && monitor.httpStatusCode !== null && monitor.httpStatusCode !== undefined ? [['Code HTTP', String(monitor.httpStatusCode)]] : []),
+            ...(monitor.type === 'HTTP' && monitor.failureReason ? [['Dernière raison d’échec', monitor.failureReason]] : []),
+            ...(monitor.type === 'HTTP' && monitor.headerValue ? [['Valeur header', monitor.headerValue]] : []),
+            ...(monitor.type === 'HTTP' && monitor.jsonValue ? [['Valeur JSON', monitor.jsonValue]] : []),
+            ...(monitor.type === 'DNS Record' && monitor.hostName ? [['Hôte DNS', monitor.hostName]] : []),
+            ...(monitor.type === 'DNS Record' && monitor.recordType ? [['Type record', monitor.recordType]] : []),
+            ...(monitor.type === 'DNS Record' && monitor.jsonValue ? [['Valeur attendue', monitor.jsonValue]] : []),
+            ...(monitor.type === 'DNS Record' && monitor.headerValue ? [['Valeur observée', monitor.headerValue]] : []),
+            ...(monitor.type === 'DNS Record' && monitor.failureReason ? [['Dernière raison d’échec', monitor.failureReason]] : []),
             ['Source', createSourceBadge(monitor.source)],
             ['Dernier contrôle', formatDate(monitor.lastCheckAt)],
             ['Dernier succès', formatDate(monitor.lastSuccessAt)],
@@ -1393,7 +1552,9 @@ async function refresh() {
             pingMonitors: data.pingMonitors ?? [],
             tcpMonitors: data.tcpMonitors ?? [],
             httpMonitors: data.httpMonitors ?? [],
-            dnsMonitors: data.dnsMonitors ?? []
+            dnsMonitors: data.dnsMonitors ?? [],
+            tlsMonitors: data.tlsMonitors ?? [],
+            dnsRecordMonitors: data.dnsRecordMonitors ?? []
         };
         updateMonitorFilterOptions();
         rerenderMonitorLists();
@@ -1419,6 +1580,8 @@ document.getElementById('tcpTargetForm').addEventListener('submit', addTcpTarget
 document.getElementById('httpTargetForm').addEventListener('submit', addHttpTarget);
 document.getElementById('dnsTargetForm').addEventListener('submit', addDnsTarget);
 document.getElementById('dnsReverseTargetForm').addEventListener('submit', addDnsReverseTarget);
+document.getElementById('tlsTargetForm').addEventListener('submit', addTlsTarget);
+document.getElementById('dnsRecordTargetForm').addEventListener('submit', addDnsRecordTarget);
 document.getElementById('refreshIntervalSelect').addEventListener('change', event => {
     localStorage.setItem(refreshIntervalStorageKey, event.currentTarget.value);
     applyRefreshIntervalPreference();

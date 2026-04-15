@@ -18,10 +18,14 @@ sealed class AppConfig
     public string DashboardAuthPasswordHash { get; init; } = string.Empty;
     public int DashboardSessionHours { get; init; } = 12;
     public int DashboardRefreshSeconds { get; init; } = 5;
+    public IReadOnlyList<string> DnsServers { get; init; } = [];
+    public int DnsCacheSeconds { get; init; } = 15;
     public IReadOnlyList<string> PingTargets { get; init; } = [];
     public IReadOnlyList<TcpTargetConfig> TcpTargets { get; init; } = [];
     public IReadOnlyList<HttpTargetConfig> HttpTargets { get; init; } = [];
     public IReadOnlyList<DnsTargetConfig> DnsTargets { get; init; } = [];
+    public IReadOnlyList<TlsTargetConfig> TlsTargets { get; init; } = [];
+    public IReadOnlyList<DnsRecordTargetConfig> DnsRecordTargets { get; init; } = [];
 }
 
 sealed class TcpTargetConfig
@@ -35,6 +39,11 @@ sealed class HttpTargetConfig
     public string Url { get; init; } = string.Empty;
     public int? ExpectedStatusCode { get; init; }
     public string? ContainsText { get; init; }
+    public int? MaxResponseTimeMs { get; init; }
+    public string? ExpectedHeaderName { get; init; }
+    public string? ExpectedHeaderContains { get; init; }
+    public string? JsonPath { get; init; }
+    public string? ExpectedJsonValue { get; init; }
 }
 
 sealed class DnsTargetConfig
@@ -43,6 +52,22 @@ sealed class DnsTargetConfig
     public string? ExpectedAddress { get; init; }
     public string? ReverseLookupIp { get; init; }
     public string? ExpectedHost { get; init; }
+}
+
+sealed class TlsTargetConfig
+{
+    public string Host { get; init; } = string.Empty;
+    public int Port { get; init; } = 443;
+    public string? ExpectedHost { get; init; }
+    public int? WarningDays { get; init; }
+}
+
+sealed class DnsRecordTargetConfig
+{
+    public string Host { get; init; } = string.Empty;
+    public string RecordType { get; init; } = string.Empty;
+    public string? ExpectedValue { get; init; }
+    public string? ContainsText { get; init; }
 }
 
 sealed class ConfigMutationResult
@@ -411,6 +436,50 @@ static class AppConfigProvider
         }
     }
 
+    public static ConfigMutationResult AddTlsTarget(string host, int port, string? expectedHost, int? warningDays)
+    {
+        host = host.Trim();
+        expectedHost = string.IsNullOrWhiteSpace(expectedHost) ? null : expectedHost.Trim();
+
+        if (string.IsNullOrWhiteSpace(host) || port <= 0)
+        {
+            return new ConfigMutationResult
+            {
+                Success = false,
+                Message = "L'hôte TLS et un port strictement positif sont obligatoires."
+            };
+        }
+
+        if (warningDays is <= 0)
+            warningDays = null;
+
+        lock (_lock)
+        {
+            if (BuildEffectiveConfig(_yamlConfig).TlsTargets.Any(target => string.Equals(target.Host, host, StringComparison.OrdinalIgnoreCase) && target.Port == port))
+            {
+                return new ConfigMutationResult
+                {
+                    Success = true,
+                    Message = $"Le check TLS '{host}:{port}' est déjà monitoré."
+                };
+            }
+
+            var updated = CloneYamlConfig(_yamlConfig);
+            updated.TlsTargets = NormalizeTlsTargets([
+                .. (updated.TlsTargets ?? []),
+                new TlsTargetConfig
+                {
+                    Host = host,
+                    Port = port,
+                    ExpectedHost = expectedHost,
+                    WarningDays = warningDays
+                }
+            ]).ToList();
+
+            return SaveYamlConfig(updated, $"Le check TLS '{host}:{port}' a été ajouté au fichier YAML.");
+        }
+    }
+
     public static string GetTcpTargetSource(string host, int port)
     {
         lock (_lock)
@@ -438,6 +507,29 @@ static class AppConfigProvider
             var inEnvironment = ParseDnsTargetsFromEnvironment().Any(target => string.Equals(target.Host, host, StringComparison.OrdinalIgnoreCase) || string.Equals(target.ReverseLookupIp, host, StringComparison.OrdinalIgnoreCase));
             var inYaml = NormalizeDnsTargets(_yamlConfig.DnsTargets ?? []).Any(target => string.Equals(target.Host, host, StringComparison.OrdinalIgnoreCase) || string.Equals(target.ReverseLookupIp, host, StringComparison.OrdinalIgnoreCase));
             return BuildSourceLabel(inEnvironment, inYaml);
+        }
+    }
+
+    public static string GetTlsTargetSource(string host, int port)
+    {
+        lock (_lock)
+        {
+            var inYaml = NormalizeTlsTargets(_yamlConfig.TlsTargets ?? []).Any(target => string.Equals(target.Host, host, StringComparison.OrdinalIgnoreCase) && target.Port == port);
+            return BuildSourceLabel(false, inYaml);
+        }
+    }
+
+    public static string GetDnsRecordTargetSource(string host, string recordType, string? expectedValue, string? containsText)
+    {
+        host = host.Trim();
+        recordType = recordType.Trim().ToUpperInvariant();
+        expectedValue = string.IsNullOrWhiteSpace(expectedValue) ? null : expectedValue.Trim();
+        containsText = string.IsNullOrWhiteSpace(containsText) ? null : containsText.Trim();
+
+        lock (_lock)
+        {
+            var inYaml = NormalizeDnsRecordTargets(_yamlConfig.DnsRecordTargets ?? []).Any(target => DnsRecordTargetMatches(target, host, recordType, expectedValue, containsText));
+            return BuildSourceLabel(false, inYaml);
         }
     }
 
@@ -481,6 +573,132 @@ static class AppConfigProvider
                 : $"L'endpoint TCP '{host}:{port}' a été supprimé du fichier YAML.";
 
             return SaveYamlConfig(updated, successMessage);
+        }
+    }
+
+    public static ConfigMutationResult RemoveTlsTarget(string host, int port)
+    {
+        host = host.Trim();
+        if (string.IsNullOrWhiteSpace(host) || port <= 0)
+        {
+            return new ConfigMutationResult
+            {
+                Success = false,
+                Message = "L'hôte TLS et un port strictement positif sont obligatoires."
+            };
+        }
+
+        lock (_lock)
+        {
+            var yamlTargets = NormalizeTlsTargets(_yamlConfig.TlsTargets ?? []);
+            var inYaml = yamlTargets.Any(target => string.Equals(target.Host, host, StringComparison.OrdinalIgnoreCase) && target.Port == port);
+
+            if (!inYaml)
+            {
+                return new ConfigMutationResult
+                {
+                    Success = false,
+                    Message = $"Le check TLS '{host}:{port}' n'existe pas dans le fichier YAML."
+                };
+            }
+
+            var updated = CloneYamlConfig(_yamlConfig);
+            updated.TlsTargets = yamlTargets
+                .Where(target => !string.Equals(target.Host, host, StringComparison.OrdinalIgnoreCase) || target.Port != port)
+                .ToList();
+
+            return SaveYamlConfig(updated, $"Le check TLS '{host}:{port}' a été supprimé du fichier YAML.");
+        }
+    }
+
+    public static ConfigMutationResult AddDnsRecordTarget(string host, string recordType, string? expectedValue, string? containsText)
+    {
+        host = host.Trim();
+        recordType = recordType.Trim().ToUpperInvariant();
+        expectedValue = string.IsNullOrWhiteSpace(expectedValue) ? null : expectedValue.Trim();
+        containsText = string.IsNullOrWhiteSpace(containsText) ? null : containsText.Trim();
+
+        if (string.IsNullOrWhiteSpace(host) || string.IsNullOrWhiteSpace(recordType))
+        {
+            return new ConfigMutationResult
+            {
+                Success = false,
+                Message = "L'hôte DNS et le type d'enregistrement sont obligatoires."
+            };
+        }
+
+        if (!IsSupportedDnsRecordType(recordType))
+        {
+            return new ConfigMutationResult
+            {
+                Success = false,
+                Message = "Les types d'enregistrements DNS supportés sont MX, TXT, CNAME et NS."
+            };
+        }
+
+        lock (_lock)
+        {
+            if (BuildEffectiveConfig(_yamlConfig).DnsRecordTargets.Any(target => DnsRecordTargetMatches(target, host, recordType, expectedValue, containsText)))
+            {
+                return new ConfigMutationResult
+                {
+                    Success = true,
+                    Message = $"Le check DNS record '{recordType} {host}' est déjà monitoré."
+                };
+            }
+
+            var updated = CloneYamlConfig(_yamlConfig);
+            updated.DnsRecordTargets = NormalizeDnsRecordTargets([
+                .. (updated.DnsRecordTargets ?? []),
+                new DnsRecordTargetConfig
+                {
+                    Host = host,
+                    RecordType = recordType,
+                    ExpectedValue = expectedValue,
+                    ContainsText = containsText
+                }
+            ]).ToList();
+
+            return SaveYamlConfig(updated, $"Le check DNS record '{recordType} {host}' a été ajouté au fichier YAML.");
+        }
+    }
+
+    public static ConfigMutationResult RemoveDnsRecordTarget(string host, string recordType, string? expectedValue, string? containsText)
+    {
+        host = host.Trim();
+        recordType = recordType.Trim().ToUpperInvariant();
+        expectedValue = string.IsNullOrWhiteSpace(expectedValue) ? null : expectedValue.Trim();
+        containsText = string.IsNullOrWhiteSpace(containsText) ? null : containsText.Trim();
+
+        if (string.IsNullOrWhiteSpace(host) || string.IsNullOrWhiteSpace(recordType))
+        {
+            return new ConfigMutationResult
+            {
+                Success = false,
+                Message = "L'hôte DNS et le type d'enregistrement sont obligatoires."
+            };
+        }
+
+        lock (_lock)
+        {
+            var yamlTargets = NormalizeDnsRecordTargets(_yamlConfig.DnsRecordTargets ?? []);
+            var inYaml = yamlTargets.Any(target => DnsRecordTargetMatches(target, host, recordType, expectedValue, containsText));
+
+            if (!inYaml)
+            {
+                return new ConfigMutationResult
+                {
+                    Success = false,
+                    Message = $"Le check DNS record '{recordType} {host}' n'existe pas dans le fichier YAML."
+                };
+            }
+
+            var updated = CloneYamlConfig(_yamlConfig);
+            updated.DnsRecordTargets = yamlTargets
+                .Where(target => !DnsRecordTargetMatches(target, host, recordType, expectedValue, containsText))
+                .ToList();
+
+            return SaveYamlConfig(updated, $"Le check DNS record '{recordType} {host}' a été supprimé du fichier YAML.");
         }
     }
 
@@ -783,10 +1001,14 @@ static class AppConfigProvider
             DashboardAuthPasswordHashFile = source.DashboardAuthPasswordHashFile,
             DashboardSessionHours = source.DashboardSessionHours,
             DashboardRefreshSeconds = source.DashboardRefreshSeconds,
+            DnsServers = source.DnsServers is null ? null : [.. source.DnsServers],
+            DnsCacheSeconds = source.DnsCacheSeconds,
             PingTargets = source.PingTargets is null ? null : [.. source.PingTargets],
             TcpTargets = source.TcpTargets is null ? null : [.. source.TcpTargets.Select(target => new TcpTargetConfig { Host = target.Host, Port = target.Port })],
-            HttpTargets = source.HttpTargets is null ? null : [.. source.HttpTargets.Select(target => new HttpTargetConfig { Url = target.Url, ExpectedStatusCode = target.ExpectedStatusCode, ContainsText = target.ContainsText })],
-            DnsTargets = source.DnsTargets is null ? null : [.. source.DnsTargets.Select(target => new DnsTargetConfig { Host = target.Host, ExpectedAddress = target.ExpectedAddress, ReverseLookupIp = target.ReverseLookupIp, ExpectedHost = target.ExpectedHost })]
+            HttpTargets = source.HttpTargets is null ? null : [.. source.HttpTargets.Select(target => new HttpTargetConfig { Url = target.Url, ExpectedStatusCode = target.ExpectedStatusCode, ContainsText = target.ContainsText, MaxResponseTimeMs = target.MaxResponseTimeMs, ExpectedHeaderName = target.ExpectedHeaderName, ExpectedHeaderContains = target.ExpectedHeaderContains, JsonPath = target.JsonPath, ExpectedJsonValue = target.ExpectedJsonValue })],
+            DnsTargets = source.DnsTargets is null ? null : [.. source.DnsTargets.Select(target => new DnsTargetConfig { Host = target.Host, ExpectedAddress = target.ExpectedAddress, ReverseLookupIp = target.ReverseLookupIp, ExpectedHost = target.ExpectedHost })],
+            TlsTargets = source.TlsTargets is null ? null : [.. source.TlsTargets.Select(target => new TlsTargetConfig { Host = target.Host, Port = target.Port, ExpectedHost = target.ExpectedHost, WarningDays = target.WarningDays })],
+            DnsRecordTargets = source.DnsRecordTargets is null ? null : [.. source.DnsRecordTargets.Select(target => new DnsRecordTargetConfig { Host = target.Host, RecordType = target.RecordType, ExpectedValue = target.ExpectedValue, ContainsText = target.ContainsText })]
         };
     }
 
@@ -817,6 +1039,22 @@ static class AppConfigProvider
             ("refreshSeconds", config.DashboardRefreshSeconds?.ToString(), true)
         ]);
 
+        var dnsCacheSeconds = config.DnsCacheSeconds;
+        if ((config.DnsServers?.Count ?? 0) > 0 || dnsCacheSeconds > 0)
+        {
+            AppendBlankLine(lines);
+            lines.Add("dns:");
+
+            if (config.DnsServers?.Count > 0)
+            {
+                lines.Add("  servers:");
+                foreach (var server in config.DnsServers)
+                    lines.Add($"    - {QuoteYaml(server)}");
+            }
+
+            lines.Add($"  cacheSeconds: {dnsCacheSeconds}");
+        }
+
         AppendBlankLine(lines);
         AppendScalarSection(lines, "pushover", [
             ("token", config.PushoverToken, false),
@@ -825,7 +1063,7 @@ static class AppConfigProvider
             ("shutdownSound", config.ShutdownSound, false)
         ]);
 
-        if ((config.PingTargets?.Count ?? 0) > 0 || (config.TcpTargets?.Count ?? 0) > 0 || (config.HttpTargets?.Count ?? 0) > 0 || (config.DnsTargets?.Count ?? 0) > 0)
+        if ((config.PingTargets?.Count ?? 0) > 0 || (config.TcpTargets?.Count ?? 0) > 0 || (config.HttpTargets?.Count ?? 0) > 0 || (config.DnsTargets?.Count ?? 0) > 0 || (config.TlsTargets?.Count ?? 0) > 0 || (config.DnsRecordTargets?.Count ?? 0) > 0)
         {
             AppendBlankLine(lines);
             lines.Add("monitoring:");
@@ -857,6 +1095,16 @@ static class AppConfigProvider
                         lines.Add($"      expectedStatusCode: {expectedStatusCode}");
                     if (!string.IsNullOrWhiteSpace(target.ContainsText))
                         lines.Add($"      containsText: {QuoteYaml(target.ContainsText!)}");
+                    if (target.MaxResponseTimeMs is int maxResponseTimeMs)
+                        lines.Add($"      maxResponseTimeMs: {maxResponseTimeMs}");
+                    if (!string.IsNullOrWhiteSpace(target.ExpectedHeaderName))
+                        lines.Add($"      expectedHeaderName: {QuoteYaml(target.ExpectedHeaderName!)}");
+                    if (!string.IsNullOrWhiteSpace(target.ExpectedHeaderContains))
+                        lines.Add($"      expectedHeaderContains: {QuoteYaml(target.ExpectedHeaderContains!)}");
+                    if (!string.IsNullOrWhiteSpace(target.JsonPath))
+                        lines.Add($"      jsonPath: {QuoteYaml(target.JsonPath!)}");
+                    if (!string.IsNullOrWhiteSpace(target.ExpectedJsonValue))
+                        lines.Add($"      expectedJsonValue: {QuoteYaml(target.ExpectedJsonValue!)}");
                 }
             }
 
@@ -877,6 +1125,34 @@ static class AppConfigProvider
                         if (!string.IsNullOrWhiteSpace(target.ExpectedAddress))
                             lines.Add($"      expectedAddress: {QuoteYaml(target.ExpectedAddress)}");
                     }
+                }
+            }
+
+            if (config.TlsTargets?.Count > 0)
+            {
+                lines.Add("  tlsTargets:");
+                foreach (var target in config.TlsTargets)
+                {
+                    lines.Add($"    - host: {QuoteYaml(target.Host)}");
+                    lines.Add($"      port: {target.Port}");
+                    if (!string.IsNullOrWhiteSpace(target.ExpectedHost))
+                        lines.Add($"      expectedHost: {QuoteYaml(target.ExpectedHost)}");
+                    if (target.WarningDays is int warningDays)
+                        lines.Add($"      warningDays: {warningDays}");
+                }
+            }
+
+            if (config.DnsRecordTargets?.Count > 0)
+            {
+                lines.Add("  dnsRecordTargets:");
+                foreach (var target in config.DnsRecordTargets)
+                {
+                    lines.Add($"    - host: {QuoteYaml(target.Host)}");
+                    lines.Add($"      recordType: {QuoteYaml(target.RecordType)}");
+                    if (!string.IsNullOrWhiteSpace(target.ExpectedValue))
+                        lines.Add($"      expectedValue: {QuoteYaml(target.ExpectedValue!)}");
+                    if (!string.IsNullOrWhiteSpace(target.ContainsText))
+                        lines.Add($"      containsText: {QuoteYaml(target.ContainsText!)}");
                 }
             }
         }
@@ -946,6 +1222,14 @@ static class AppConfigProvider
             ? NormalizeDnsTargets(yamlConfig.DnsTargets)
             : [];
 
+        var yamlTlsTargets = yamlConfig.TlsTargets is not null
+            ? NormalizeTlsTargets(yamlConfig.TlsTargets)
+            : [];
+
+        var yamlDnsRecordTargets = yamlConfig.DnsRecordTargets is not null
+            ? NormalizeDnsRecordTargets(yamlConfig.DnsRecordTargets)
+            : [];
+
         return new AppConfig
         {
             AppVersion = FirstNonEmpty(yamlConfig.AppVersion, Environment.GetEnvironmentVariable("APP_VERSION")) ?? "inconnue",
@@ -965,10 +1249,14 @@ static class AppConfigProvider
                 Environment.GetEnvironmentVariable("DASHBOARD_AUTH_PASSWORD_HASH")) ?? string.Empty,
             DashboardSessionHours = yamlConfig.DashboardSessionHours ?? ParsePositiveInt(Environment.GetEnvironmentVariable("DASHBOARD_SESSION_HOURS"), 12),
             DashboardRefreshSeconds = yamlConfig.DashboardRefreshSeconds ?? ParsePositiveInt(Environment.GetEnvironmentVariable("DASHBOARD_REFRESH_SECONDS"), 5),
+            DnsServers = MergeDnsServers(ParseDnsServersFromEnvironment(), yamlConfig.DnsServers is not null ? NormalizeDnsServers(yamlConfig.DnsServers) : []),
+            DnsCacheSeconds = yamlConfig.DnsCacheSeconds ?? ParsePositiveInt(Environment.GetEnvironmentVariable("DNS_CACHE_SECONDS"), 15),
             PingTargets = MergePingTargets(environmentPingTargets, yamlPingTargets),
             TcpTargets = MergeTcpTargets(environmentTcpTargets, yamlTcpTargets),
             HttpTargets = MergeHttpTargets(environmentHttpTargets, yamlHttpTargets),
-            DnsTargets = MergeDnsTargets(environmentDnsTargets, yamlDnsTargets)
+            DnsTargets = MergeDnsTargets(environmentDnsTargets, yamlDnsTargets),
+            TlsTargets = yamlTlsTargets,
+            DnsRecordTargets = yamlDnsRecordTargets
         };
     }
 
@@ -991,6 +1279,14 @@ static class AppConfigProvider
     {
         return environmentTargets
             .Concat(yamlTargets)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+    }
+
+    private static IReadOnlyList<string> MergeDnsServers(IReadOnlyList<string> environmentServers, IReadOnlyList<string> yamlServers)
+    {
+        return environmentServers
+            .Concat(yamlServers)
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
     }
@@ -1031,6 +1327,15 @@ static class AppConfigProvider
             .ToArray();
     }
 
+    private static IReadOnlyList<string> NormalizeDnsServers(IReadOnlyList<string> servers)
+    {
+        return servers
+            .Where(server => !string.IsNullOrWhiteSpace(server))
+            .Select(server => server.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+    }
+
     private static IReadOnlyList<TcpTargetConfig> NormalizeTcpTargets(IReadOnlyList<TcpTargetConfig> targets)
     {
         return targets
@@ -1045,7 +1350,21 @@ static class AppConfigProvider
         return targets
             .Where(target => Uri.TryCreate(target.Url, UriKind.Absolute, out _))
             .GroupBy(target => target.Url, StringComparer.OrdinalIgnoreCase)
-            .Select(group => group.First())
+            .Select(group =>
+            {
+                var target = group.First();
+                return new HttpTargetConfig
+                {
+                    Url = target.Url,
+                    ExpectedStatusCode = target.ExpectedStatusCode,
+                    ContainsText = string.IsNullOrWhiteSpace(target.ContainsText) ? null : target.ContainsText.Trim(),
+                    MaxResponseTimeMs = target.MaxResponseTimeMs,
+                    ExpectedHeaderName = string.IsNullOrWhiteSpace(target.ExpectedHeaderName) ? null : target.ExpectedHeaderName.Trim(),
+                    ExpectedHeaderContains = string.IsNullOrWhiteSpace(target.ExpectedHeaderContains) ? null : target.ExpectedHeaderContains.Trim(),
+                    JsonPath = string.IsNullOrWhiteSpace(target.JsonPath) ? null : target.JsonPath.Trim(),
+                    ExpectedJsonValue = string.IsNullOrWhiteSpace(target.ExpectedJsonValue) ? null : target.ExpectedJsonValue.Trim()
+                };
+            })
             .ToArray();
     }
 
@@ -1054,6 +1373,32 @@ static class AppConfigProvider
         return targets
             .Where(target => !string.IsNullOrWhiteSpace(target.Host) || !string.IsNullOrWhiteSpace(target.ReverseLookupIp))
             .GroupBy(target => string.IsNullOrWhiteSpace(target.ReverseLookupIp) ? $"host:{target.Host}" : $"ip:{target.ReverseLookupIp}", StringComparer.OrdinalIgnoreCase)
+            .Select(group => group.First())
+            .ToArray();
+    }
+
+    private static IReadOnlyList<TlsTargetConfig> NormalizeTlsTargets(IReadOnlyList<TlsTargetConfig> targets)
+    {
+        return targets
+            .Where(target => !string.IsNullOrWhiteSpace(target.Host) && target.Port > 0)
+            .GroupBy(target => $"{target.Host}:{target.Port}", StringComparer.OrdinalIgnoreCase)
+            .Select(group => group.First())
+            .ToArray();
+    }
+
+    private static IReadOnlyList<DnsRecordTargetConfig> NormalizeDnsRecordTargets(IReadOnlyList<DnsRecordTargetConfig> targets)
+    {
+        return targets
+            .Where(target => !string.IsNullOrWhiteSpace(target.Host) && !string.IsNullOrWhiteSpace(target.RecordType))
+            .Select(target => new DnsRecordTargetConfig
+            {
+                Host = target.Host.Trim(),
+                RecordType = target.RecordType.Trim().ToUpperInvariant(),
+                ExpectedValue = string.IsNullOrWhiteSpace(target.ExpectedValue) ? null : target.ExpectedValue.Trim(),
+                ContainsText = string.IsNullOrWhiteSpace(target.ContainsText) ? null : target.ContainsText.Trim()
+            })
+            .Where(target => IsSupportedDnsRecordType(target.RecordType))
+            .GroupBy(BuildDnsRecordIdentity, StringComparer.OrdinalIgnoreCase)
             .Select(group => group.First())
             .ToArray();
     }
@@ -1084,6 +1429,15 @@ static class AppConfigProvider
         }
 
         return NormalizeTcpTargets(targets);
+    }
+
+    private static IReadOnlyList<string> ParseDnsServersFromEnvironment()
+    {
+        var raw = Environment.GetEnvironmentVariable("DNS_SERVERS");
+        if (string.IsNullOrWhiteSpace(raw))
+            return [];
+
+        return NormalizeDnsServers(raw.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
     }
 
     private static IReadOnlyList<HttpTargetConfig> ParseHttpTargetsFromEnvironment()
@@ -1166,6 +1520,9 @@ static class AppConfigProvider
                 case "schedule":
                     ParseSchedule(lines, ref index, config);
                     break;
+                case "dns":
+                    ParseDnsSettings(lines, ref index, config);
+                    break;
                 case "pushover":
                     ParsePushover(lines, ref index, config);
                     break;
@@ -1217,6 +1574,57 @@ static class AppConfigProvider
                     break;
             }
         });
+    }
+
+    private static void ParseDnsSettings(string[] lines, ref int index, YamlAppConfig config)
+    {
+        while (index < lines.Length)
+        {
+            var line = PrepareLine(lines[index]);
+            if (line.IsEmpty)
+            {
+                index++;
+                continue;
+            }
+
+            if (line.Indent < 2)
+                break;
+
+            if (line.Indent != 2)
+                throw new FormatException($"Bloc dns invalide : {line.Content}");
+
+            if (TryParseScalar(line.Content, out var key, out var value))
+            {
+                switch (key)
+                {
+                    case "cacheSeconds":
+                        config.DnsCacheSeconds = ParseYamlPositiveInt(value, key);
+                        index++;
+                        break;
+                    default:
+                        index++;
+                        break;
+                }
+
+                continue;
+            }
+
+            if (!line.Content.EndsWith(':'))
+                throw new FormatException($"Bloc dns invalide : {line.Content}");
+
+            var section = line.Content[..^1].Trim();
+            index++;
+
+            switch (section)
+            {
+                case "servers":
+                    config.DnsServers = ParseStringList(lines, ref index, 4);
+                    break;
+                default:
+                        SkipIndentedBlock(lines, ref index, 4);
+                    break;
+            }
+        }
     }
 
     private static void ParseDashboard(string[] lines, ref int index, YamlAppConfig config)
@@ -1306,6 +1714,12 @@ static class AppConfigProvider
                 case "dnsTargets":
                     config.DnsTargets = ParseDnsTargetList(lines, ref index, 4);
                     break;
+                case "dnsRecordTargets":
+                    config.DnsRecordTargets = ParseDnsRecordTargetList(lines, ref index, 4);
+                    break;
+                case "tlsTargets":
+                    config.TlsTargets = ParseTlsTargetList(lines, ref index, 4);
+                    break;
                 default:
                     SkipIndentedBlock(lines, ref index, 4);
                     break;
@@ -1364,6 +1778,136 @@ static class AppConfigProvider
         return items;
     }
 
+    private static List<DnsRecordTargetConfig> ParseDnsRecordTargetList(string[] lines, ref int index, int expectedIndent)
+    {
+        var items = new List<DnsRecordTargetConfig>();
+
+        while (index < lines.Length)
+        {
+            var line = PrepareLine(lines[index]);
+            if (line.IsEmpty)
+            {
+                index++;
+                continue;
+            }
+
+            if (line.Indent < expectedIndent)
+                break;
+
+            if (line.Indent != expectedIndent || !line.Content.StartsWith("- "))
+                throw new FormatException($"Liste dnsRecordTargets invalide : {line.Content}");
+
+            var item = line.Content[2..].Trim();
+            var host = string.Empty;
+            var recordType = string.Empty;
+            string? expectedValue = null;
+            string? containsText = null;
+
+            if (TryParseScalar(item, out var inlineKey, out var inlineValue))
+                ApplyDnsRecordField(inlineKey, inlineValue, ref host, ref recordType, ref expectedValue, ref containsText);
+            else
+                throw new FormatException($"Entrée dnsRecordTargets invalide : {line.Content}");
+
+            index++;
+            while (index < lines.Length)
+            {
+                var childLine = PrepareLine(lines[index]);
+                if (childLine.IsEmpty)
+                {
+                    index++;
+                    continue;
+                }
+
+                if (childLine.Indent <= expectedIndent)
+                    break;
+
+                if (childLine.Indent != expectedIndent + 2 || !TryParseScalar(childLine.Content, out var childKey, out var childValue))
+                    throw new FormatException($"Entrée dnsRecordTargets invalide : {childLine.Content}");
+
+                ApplyDnsRecordField(childKey, childValue, ref host, ref recordType, ref expectedValue, ref containsText);
+                index++;
+            }
+
+            if (string.IsNullOrWhiteSpace(host) || string.IsNullOrWhiteSpace(recordType))
+                throw new FormatException("Chaque entrée dnsRecordTargets doit contenir host et recordType.");
+
+            items.Add(new DnsRecordTargetConfig
+            {
+                Host = host,
+                RecordType = recordType,
+                ExpectedValue = expectedValue,
+                ContainsText = containsText
+            });
+        }
+
+        return items;
+    }
+
+    private static List<TlsTargetConfig> ParseTlsTargetList(string[] lines, ref int index, int expectedIndent)
+    {
+        var items = new List<TlsTargetConfig>();
+
+        while (index < lines.Length)
+        {
+            var line = PrepareLine(lines[index]);
+            if (line.IsEmpty)
+            {
+                index++;
+                continue;
+            }
+
+            if (line.Indent < expectedIndent)
+                break;
+
+            if (line.Indent != expectedIndent || !line.Content.StartsWith("- "))
+                throw new FormatException($"Liste tlsTargets invalide : {line.Content}");
+
+            var item = line.Content[2..].Trim();
+            var host = string.Empty;
+            var port = 443;
+            string? expectedHost = null;
+            int? warningDays = null;
+
+            if (TryParseScalar(item, out var inlineKey, out var inlineValue))
+                ApplyTlsField(inlineKey, inlineValue, ref host, ref port, ref expectedHost, ref warningDays);
+            else
+                throw new FormatException($"Entrée tlsTargets invalide : {line.Content}");
+
+            index++;
+            while (index < lines.Length)
+            {
+                var childLine = PrepareLine(lines[index]);
+                if (childLine.IsEmpty)
+                {
+                    index++;
+                    continue;
+                }
+
+                if (childLine.Indent <= expectedIndent)
+                    break;
+
+                if (childLine.Indent != expectedIndent + 2 || !TryParseScalar(childLine.Content, out var childKey, out var childValue))
+                    throw new FormatException($"Entrée tlsTargets invalide : {childLine.Content}");
+
+                ApplyTlsField(childKey, childValue, ref host, ref port, ref expectedHost, ref warningDays);
+                index++;
+            }
+
+            if (string.IsNullOrWhiteSpace(host) || port <= 0)
+                throw new FormatException("Chaque entrée tlsTargets doit contenir host et port.");
+
+            items.Add(new TlsTargetConfig
+            {
+                Host = host,
+                Port = port,
+                ExpectedHost = expectedHost,
+                WarningDays = warningDays
+            });
+        }
+
+        return items;
+    }
+
     private static List<HttpTargetConfig> ParseHttpTargetList(string[] lines, ref int index, int expectedIndent)
     {
         var items = new List<HttpTargetConfig>();
@@ -1394,9 +1938,14 @@ static class AppConfigProvider
             var url = string.Empty;
             int? expectedStatusCode = null;
             string? containsText = null;
+            int? maxResponseTimeMs = null;
+            string? expectedHeaderName = null;
+            string? expectedHeaderContains = null;
+            string? jsonPath = null;
+            string? expectedJsonValue = null;
 
             if (TryParseScalar(item, out var inlineKey, out var inlineValue))
-                ApplyHttpField(inlineKey, inlineValue, ref url, ref expectedStatusCode, ref containsText);
+                ApplyHttpField(inlineKey, inlineValue, ref url, ref expectedStatusCode, ref containsText, ref maxResponseTimeMs, ref expectedHeaderName, ref expectedHeaderContains, ref jsonPath, ref expectedJsonValue);
             else
                 throw new FormatException($"Entrée httpTargets invalide : {line.Content}");
 
@@ -1416,7 +1965,7 @@ static class AppConfigProvider
                 if (childLine.Indent != expectedIndent + 2 || !TryParseScalar(childLine.Content, out var childKey, out var childValue))
                     throw new FormatException($"Entrée httpTargets invalide : {childLine.Content}");
 
-                ApplyHttpField(childKey, childValue, ref url, ref expectedStatusCode, ref containsText);
+                ApplyHttpField(childKey, childValue, ref url, ref expectedStatusCode, ref containsText, ref maxResponseTimeMs, ref expectedHeaderName, ref expectedHeaderContains, ref jsonPath, ref expectedJsonValue);
                 index++;
             }
 
@@ -1427,7 +1976,12 @@ static class AppConfigProvider
             {
                 Url = url,
                 ExpectedStatusCode = expectedStatusCode,
-                ContainsText = containsText
+                ContainsText = containsText,
+                MaxResponseTimeMs = maxResponseTimeMs,
+                ExpectedHeaderName = expectedHeaderName,
+                ExpectedHeaderContains = expectedHeaderContains,
+                JsonPath = jsonPath,
+                ExpectedJsonValue = expectedJsonValue
             });
         }
 
@@ -1584,7 +2138,57 @@ static class AppConfigProvider
         }
     }
 
-    private static void ApplyHttpField(string key, string value, ref string url, ref int? expectedStatusCode, ref string? containsText)
+    private static void ApplyDnsRecordField(string key, string value, ref string host, ref string recordType, ref string? expectedValue, ref string? containsText)
+    {
+        switch (key)
+        {
+            case "host":
+                host = Unquote(value);
+                break;
+            case "recordType":
+                recordType = Unquote(value);
+                break;
+            case "expectedValue":
+                expectedValue = Unquote(value);
+                break;
+            case "containsText":
+                containsText = Unquote(value);
+                break;
+        }
+    }
+
+    private static bool IsSupportedDnsRecordType(string recordType)
+        => recordType is "MX" or "TXT" or "CNAME" or "NS" or "SRV";
+
+    private static string BuildDnsRecordIdentity(DnsRecordTargetConfig target)
+        => $"{target.RecordType}|{target.Host}|{target.ExpectedValue}|{target.ContainsText}";
+
+    private static bool DnsRecordTargetMatches(DnsRecordTargetConfig target, string host, string recordType, string? expectedValue, string? containsText)
+        => string.Equals(target.Host, host, StringComparison.OrdinalIgnoreCase)
+            && string.Equals(target.RecordType, recordType, StringComparison.OrdinalIgnoreCase)
+            && string.Equals(target.ExpectedValue ?? string.Empty, expectedValue ?? string.Empty, StringComparison.OrdinalIgnoreCase)
+            && string.Equals(target.ContainsText ?? string.Empty, containsText ?? string.Empty, StringComparison.OrdinalIgnoreCase);
+
+    private static void ApplyTlsField(string key, string value, ref string host, ref int port, ref string? expectedHost, ref int? warningDays)
+    {
+        switch (key)
+        {
+            case "host":
+                host = Unquote(value);
+                break;
+            case "port":
+                port = ParseYamlPositiveInt(value, key);
+                break;
+            case "expectedHost":
+                expectedHost = Unquote(value);
+                break;
+            case "warningDays":
+                warningDays = ParseYamlPositiveInt(value, key);
+                break;
+        }
+    }
+
+    private static void ApplyHttpField(string key, string value, ref string url, ref int? expectedStatusCode, ref string? containsText, ref int? maxResponseTimeMs, ref string? expectedHeaderName, ref string? expectedHeaderContains, ref string? jsonPath, ref string? expectedJsonValue)
     {
         switch (key)
         {
@@ -1596,6 +2200,21 @@ static class AppConfigProvider
                 break;
             case "containsText":
                 containsText = Unquote(value);
+                break;
+            case "maxResponseTimeMs":
+                maxResponseTimeMs = ParseYamlPositiveInt(value, key);
+                break;
+            case "expectedHeaderName":
+                expectedHeaderName = Unquote(value);
+                break;
+            case "expectedHeaderContains":
+                expectedHeaderContains = Unquote(value);
+                break;
+            case "jsonPath":
+                jsonPath = Unquote(value);
+                break;
+            case "expectedJsonValue":
+                expectedJsonValue = Unquote(value);
                 break;
         }
     }
@@ -1765,8 +2384,12 @@ sealed class YamlAppConfig
     public string? DashboardAuthPasswordHashFile { get; set; }
     public int? DashboardSessionHours { get; set; }
     public int? DashboardRefreshSeconds { get; set; }
+    public List<string>? DnsServers { get; set; }
+    public int? DnsCacheSeconds { get; set; }
     public List<string>? PingTargets { get; set; }
     public List<TcpTargetConfig>? TcpTargets { get; set; }
     public List<HttpTargetConfig>? HttpTargets { get; set; }
     public List<DnsTargetConfig>? DnsTargets { get; set; }
+    public List<TlsTargetConfig>? TlsTargets { get; set; }
+    public List<DnsRecordTargetConfig>? DnsRecordTargets { get; set; }
 }

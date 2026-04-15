@@ -328,6 +328,38 @@ static class DashboardWebServer
                 statusCode: result.Success ? StatusCodes.Status200OK : StatusCodes.Status400BadRequest);
         });
 
+        app.MapPost("/api/actions/add-dns-record", (string host, string recordType, string? expectedValue, string? containsText) =>
+        {
+            var result = AppConfigProvider.AddDnsRecordTarget(host, recordType, expectedValue, containsText);
+            var response = new DashboardActionResponse
+            {
+                Success = result.Success,
+                Message = result.Message
+            };
+
+            var json = JsonSerializer.Serialize(response, typeof(DashboardActionResponse), DashboardJsonContext.Default);
+            return Results.Text(
+                json,
+                "application/json",
+                statusCode: result.Success ? StatusCodes.Status200OK : StatusCodes.Status400BadRequest);
+        });
+
+        app.MapPost("/api/actions/add-tls", (string host, int port, string? expectedHost, int? warningDays) =>
+        {
+            var result = AppConfigProvider.AddTlsTarget(host, port, expectedHost, warningDays);
+            var response = new DashboardActionResponse
+            {
+                Success = result.Success,
+                Message = result.Message
+            };
+
+            var json = JsonSerializer.Serialize(response, typeof(DashboardActionResponse), DashboardJsonContext.Default);
+            return Results.Text(
+                json,
+                "application/json",
+                statusCode: result.Success ? StatusCodes.Status200OK : StatusCodes.Status400BadRequest);
+        });
+
         app.MapPost("/api/actions/remove-ping", (string target) =>
         {
             var result = AppConfigProvider.RemovePingTarget(target);
@@ -443,6 +475,38 @@ static class DashboardWebServer
         app.MapPost("/api/actions/remove-dns-reverse", (string ip) =>
         {
             var result = AppConfigProvider.RemoveDnsReverseTarget(ip);
+            var response = new DashboardActionResponse
+            {
+                Success = result.Success,
+                Message = result.Message
+            };
+
+            var json = JsonSerializer.Serialize(response, typeof(DashboardActionResponse), DashboardJsonContext.Default);
+            return Results.Text(
+                json,
+                "application/json",
+                statusCode: result.Success ? StatusCodes.Status200OK : StatusCodes.Status400BadRequest);
+        });
+
+        app.MapPost("/api/actions/remove-tls", (string host, int port) =>
+        {
+            var result = AppConfigProvider.RemoveTlsTarget(host, port);
+            var response = new DashboardActionResponse
+            {
+                Success = result.Success,
+                Message = result.Message
+            };
+
+            var json = JsonSerializer.Serialize(response, typeof(DashboardActionResponse), DashboardJsonContext.Default);
+            return Results.Text(
+                json,
+                "application/json",
+                statusCode: result.Success ? StatusCodes.Status200OK : StatusCodes.Status400BadRequest);
+        });
+
+        app.MapPost("/api/actions/remove-dns-record", (string host, string recordType, string? expectedValue, string? containsText) =>
+        {
+            var result = AppConfigProvider.RemoveDnsRecordTarget(host, recordType, expectedValue, containsText);
             var response = new DashboardActionResponse
             {
                 Success = result.Success,

@@ -16,6 +16,12 @@ dashboard:
   sessionHours: 12
   refreshSeconds: 5
 
+dns:
+  servers:
+    - "1.1.1.1"
+    - "8.8.8.8"
+  cacheSeconds: 15
+
 pushover:
   token: "your-pushover-token"
   user: "your-pushover-user"
@@ -34,8 +40,28 @@ monitoring:
     - url: "https://example.com/health"
       expectedStatusCode: 200
       containsText: "OK"
+      maxResponseTimeMs: 1500
+      expectedHeaderName: "content-type"
+      expectedHeaderContains: "application/json"
+      jsonPath: "status"
+      expectedJsonValue: "ok"
   dnsTargets:
     - host: "example.com"
       expectedAddress: "93.184.216.34"
     - ip: "8.8.8.8"
       expectedHost: "dns.google"
+  dnsRecordTargets:
+    - host: "example.com"
+      recordType: "MX"
+      expectedValue: "mail.example.com"
+    - host: "_dmarc.example.com"
+      recordType: "TXT"
+      containsText: "v=DMARC1"
+    - host: "_sip._tcp.example.com"
+      recordType: "SRV"
+      expectedValue: "10 5 5060 sip.example.com"
+  tlsTargets:
+    - host: "example.com"
+      port: 443
+      expectedHost: "example.com"
+      warningDays: 30

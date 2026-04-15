@@ -18,6 +18,8 @@ sealed class DashboardSnapshot
     public IReadOnlyList<DashboardMonitorSnapshot> TcpMonitors { get; init; } = [];
     public IReadOnlyList<DashboardMonitorSnapshot> HttpMonitors { get; init; } = [];
     public IReadOnlyList<DashboardMonitorSnapshot> DnsMonitors { get; init; } = [];
+    public IReadOnlyList<DashboardMonitorSnapshot> TlsMonitors { get; init; } = [];
+    public IReadOnlyList<DashboardMonitorSnapshot> DnsRecordMonitors { get; init; } = [];
     public IReadOnlyList<DashboardIncidentSnapshot> RecentIncidents { get; init; } = [];
 }
 
@@ -58,6 +60,7 @@ sealed class DashboardMonitorSnapshot
     public string Source { get; init; } = string.Empty;
     public string Status { get; init; } = string.Empty;
     public bool IsDown { get; init; }
+    public bool IsWarning { get; init; }
     public int FailCount { get; init; }
     public DateTime? LastCheckAt { get; init; }
     public DateTime? LastSuccessAt { get; init; }
@@ -66,6 +69,15 @@ sealed class DashboardMonitorSnapshot
     public DateTime? CircuitOpenUntil { get; init; }
     public DateTime? SnoozeUntil { get; init; }
     public double? LastDurationMs { get; init; }
+    public DateTimeOffset? CertificateNotAfter { get; init; }
+    public string? CertificateSubject { get; init; }
+    public string? CertificateIssuer { get; init; }
+    public int? DaysRemaining { get; init; }
+    public int? HttpStatusCode { get; init; }
+    public string? FailureReason { get; init; }
+    public string? HeaderValue { get; init; }
+    public string? JsonValue { get; init; }
+    public string? RecordType { get; init; }
 }
 
 sealed class DashboardIncidentSnapshot

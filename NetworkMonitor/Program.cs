@@ -31,12 +31,14 @@ internal class Program
         var tcpMonitors = CreateTcpMonitors(config.TcpTargets, loggerFactory);
         var httpMonitors = CreateHttpMonitors(config.HttpTargets, loggerFactory);
         var dnsMonitors = CreateDnsMonitors(config.DnsTargets, loggerFactory);
+        var tlsMonitors = CreateTlsMonitors(config.TlsTargets, loggerFactory);
+        var dnsRecordMonitors = CreateDnsRecordMonitors(config.DnsRecordTargets, loggerFactory);
         var schedule = BuildSchedule(config);
         var dashboardLogger = loggerFactory.CreateLogger("DashboardWeb");
         var dashboardApp = await EnsureDashboardStateAsync(
             null,
             config.DashboardEnabled,
-            () => BuildDashboardSnapshot(startedAt, monitorCollectionsLock, monitors, tcpMonitors, httpMonitors, dnsMonitors),
+            () => BuildDashboardSnapshot(startedAt, monitorCollectionsLock, monitors, tcpMonitors, httpMonitors, dnsMonitors, tlsMonitors, dnsRecordMonitors),
             manualCheckTrigger,
             dashboardLogger,
             cts.Token);
@@ -55,7 +57,7 @@ internal class Program
         logger.LogInformation("NetworkMonitor démarré — version {Version} — {Schedule}", version, schedule.Description);
         await PushoverClient.SendAsync(
             "🚀 NetworkMonitor démarré",
-            BuildLifecycleMessage("✨ Service opérationnel", version, schedule.Description, monitors.Count, tcpMonitors.Count, httpMonitors.Count, dnsMonitors.Count),
+            BuildLifecycleMessage("✨ Service opérationnel", version, schedule.Description, monitors.Count, tcpMonitors.Count, httpMonitors.Count, dnsMonitors.Count, tlsMonitors.Count, dnsRecordMonitors.Count),
             0,
             null,
             logger,
@@ -78,12 +80,14 @@ internal class Program
                         SyncTcpMonitors(tcpMonitors, config.TcpTargets, loggerFactory, logger);
                         SyncHttpMonitors(httpMonitors, config.HttpTargets, loggerFactory, logger);
                         SyncDnsMonitors(dnsMonitors, config.DnsTargets, loggerFactory, logger);
+                        SyncTlsMonitors(tlsMonitors, config.TlsTargets, loggerFactory, logger);
+                        SyncDnsRecordMonitors(dnsRecordMonitors, config.DnsRecordTargets, loggerFactory, logger);
                     }
                     schedule = BuildSchedule(config);
                     dashboardApp = await EnsureDashboardStateAsync(
                         dashboardApp,
                         config.DashboardEnabled,
-                        () => BuildDashboardSnapshot(startedAt, monitorCollectionsLock, monitors, tcpMonitors, httpMonitors, dnsMonitors),
+                        () => BuildDashboardSnapshot(startedAt, monitorCollectionsLock, monitors, tcpMonitors, httpMonitors, dnsMonitors, tlsMonitors, dnsRecordMonitors),
                         manualCheckTrigger,
                         dashboardLogger,
                         cts.Token);
@@ -95,12 +99,16 @@ internal class Program
                 TcpPortMonitorState[] tcpMonitorBatch;
                 HttpEndpointMonitorState[] httpMonitorBatch;
                 DnsMonitorState[] dnsMonitorBatch;
+                TlsMonitorState[] tlsMonitorBatch;
+                DnsRecordMonitorState[] dnsRecordMonitorBatch;
                 lock (monitorCollectionsLock)
                 {
                     pingMonitorBatch = monitors.Values.ToArray();
                     tcpMonitorBatch = tcpMonitors.Values.ToArray();
                     httpMonitorBatch = httpMonitors.Values.ToArray();
                     dnsMonitorBatch = dnsMonitors.Values.ToArray();
+                    tlsMonitorBatch = tlsMonitors.Values.ToArray();
+                    dnsRecordMonitorBatch = dnsRecordMonitors.Values.ToArray();
                 }
 
                 foreach (var monitor in pingMonitorBatch)
@@ -114,6 +122,12 @@ internal class Program
 
                 foreach (var dnsMonitor in dnsMonitorBatch)
                     await dnsMonitor.Check(cts.Token);
+
+                foreach (var tlsMonitor in tlsMonitorBatch)
+                    await tlsMonitor.Check(cts.Token);
+
+                foreach (var dnsRecordMonitor in dnsRecordMonitorBatch)
+                    await dnsRecordMonitor.Check(cts.Token);
 
                 try
                 {
@@ -145,7 +159,7 @@ internal class Program
             logger.LogInformation("NetworkMonitor arrêté. Motif : {Reason}", shutdownReason);
             await PushoverClient.SendAsync(
                 "🛑 NetworkMonitor arrêté",
-                BuildLifecycleMessage("🌙 Service arrêté", version, schedule.Description, monitors.Count, tcpMonitors.Count, httpMonitors.Count, dnsMonitors.Count, shutdownReason),
+                BuildLifecycleMessage("🌙 Service arrêté", version, schedule.Description, monitors.Count, tcpMonitors.Count, httpMonitors.Count, dnsMonitors.Count, tlsMonitors.Count, dnsRecordMonitors.Count, shutdownReason),
                 0,
                 null,
                 logger,
@@ -155,18 +169,22 @@ internal class Program
         }
     }
 
-    private static DashboardSnapshot BuildDashboardSnapshot(DateTimeOffset startedAt, object collectionsLock, Dictionary<string, MonitorState> monitors, Dictionary<string, TcpPortMonitorState> tcpMonitors, Dictionary<string, HttpEndpointMonitorState> httpMonitors, Dictionary<string, DnsMonitorState> dnsMonitors)
+    private static DashboardSnapshot BuildDashboardSnapshot(DateTimeOffset startedAt, object collectionsLock, Dictionary<string, MonitorState> monitors, Dictionary<string, TcpPortMonitorState> tcpMonitors, Dictionary<string, HttpEndpointMonitorState> httpMonitors, Dictionary<string, DnsMonitorState> dnsMonitors, Dictionary<string, TlsMonitorState> tlsMonitors, Dictionary<string, DnsRecordMonitorState> dnsRecordMonitors)
     {
         MonitorState[] pingMonitors;
         TcpPortMonitorState[] tcpMonitorStates;
         HttpEndpointMonitorState[] httpMonitorStates;
         DnsMonitorState[] dnsMonitorStates;
+        TlsMonitorState[] tlsMonitorStates;
+        DnsRecordMonitorState[] dnsRecordMonitorStates;
         lock (collectionsLock)
         {
             pingMonitors = monitors.Values.ToArray();
             tcpMonitorStates = tcpMonitors.Values.ToArray();
             httpMonitorStates = httpMonitors.Values.ToArray();
             dnsMonitorStates = dnsMonitors.Values.ToArray();
+            tlsMonitorStates = tlsMonitors.Values.ToArray();
+            dnsRecordMonitorStates = dnsRecordMonitors.Values.ToArray();
         }
 
         var pingSnapshots = pingMonitors
@@ -189,7 +207,17 @@ internal class Program
             .OrderBy(snapshot => snapshot.DisplayName, StringComparer.OrdinalIgnoreCase)
             .ToArray();
 
-        var allSnapshots = pingSnapshots.Concat(tcpSnapshots).Concat(httpSnapshots).Concat(dnsSnapshots).ToArray();
+        var tlsSnapshots = tlsMonitorStates
+            .Select(monitor => monitor.GetDashboardSnapshot())
+            .OrderBy(snapshot => snapshot.DisplayName, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        var dnsRecordSnapshots = dnsRecordMonitorStates
+            .Select(monitor => monitor.GetDashboardSnapshot())
+            .OrderBy(snapshot => snapshot.DisplayName, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        var allSnapshots = pingSnapshots.Concat(tcpSnapshots).Concat(httpSnapshots).Concat(dnsSnapshots).Concat(tlsSnapshots).Concat(dnsRecordSnapshots).ToArray();
         var recentIncidents = StateStore.GetRecentIncidents(20)
             .Select(incident => new DashboardIncidentSnapshot
             {
@@ -226,6 +254,8 @@ internal class Program
             TcpMonitors = tcpSnapshots,
             HttpMonitors = httpSnapshots,
             DnsMonitors = dnsSnapshots,
+            TlsMonitors = tlsSnapshots,
+            DnsRecordMonitors = dnsRecordSnapshots,
             RecentIncidents = recentIncidents
         };
     }
@@ -285,6 +315,22 @@ internal class Program
         return targets.ToDictionary(
             BuildDnsKey,
             target => new DnsMonitorState(target, loggerFactory.CreateLogger<DnsMonitorState>()),
+            StringComparer.OrdinalIgnoreCase);
+    }
+
+    private static Dictionary<string, TlsMonitorState> CreateTlsMonitors(IReadOnlyList<TlsTargetConfig> targets, ILoggerFactory loggerFactory)
+    {
+        return targets.ToDictionary(
+            target => BuildTlsKey(target.Host, target.Port),
+            target => new TlsMonitorState(target, loggerFactory.CreateLogger<TlsMonitorState>()),
+            StringComparer.OrdinalIgnoreCase);
+    }
+
+    private static Dictionary<string, DnsRecordMonitorState> CreateDnsRecordMonitors(IReadOnlyList<DnsRecordTargetConfig> targets, ILoggerFactory loggerFactory)
+    {
+        return targets.ToDictionary(
+            BuildDnsRecordKey,
+            target => new DnsRecordMonitorState(target, loggerFactory.CreateLogger<DnsRecordMonitorState>()),
             StringComparer.OrdinalIgnoreCase);
     }
 
@@ -378,6 +424,54 @@ internal class Program
         }
     }
 
+    private static void SyncTlsMonitors(Dictionary<string, TlsMonitorState> monitors, IReadOnlyList<TlsTargetConfig> configuredTargets, ILoggerFactory loggerFactory, ILogger logger)
+    {
+        var desiredTargets = configuredTargets.ToDictionary(target => BuildTlsKey(target.Host, target.Port), StringComparer.OrdinalIgnoreCase);
+
+        foreach (var key in monitors.Keys.Except(desiredTargets.Keys, StringComparer.OrdinalIgnoreCase).ToArray())
+        {
+            monitors.Remove(key);
+            logger.LogInformation("Monitor TLS supprimé suite au rechargement de la configuration : {Target}", key);
+        }
+
+        foreach (var target in desiredTargets)
+        {
+            if (monitors.ContainsKey(target.Key))
+            {
+                monitors[target.Key] = new TlsMonitorState(target.Value, loggerFactory.CreateLogger<TlsMonitorState>());
+                logger.LogInformation("Monitor TLS mis à jour suite au rechargement de la configuration : {Target}", target.Key);
+                continue;
+            }
+
+            monitors[target.Key] = new TlsMonitorState(target.Value, loggerFactory.CreateLogger<TlsMonitorState>());
+            logger.LogInformation("Monitor TLS ajouté suite au rechargement de la configuration : {Target}", target.Key);
+        }
+    }
+
+    private static void SyncDnsRecordMonitors(Dictionary<string, DnsRecordMonitorState> monitors, IReadOnlyList<DnsRecordTargetConfig> configuredTargets, ILoggerFactory loggerFactory, ILogger logger)
+    {
+        var desiredTargets = configuredTargets.ToDictionary(BuildDnsRecordKey, StringComparer.OrdinalIgnoreCase);
+
+        foreach (var key in monitors.Keys.Except(desiredTargets.Keys, StringComparer.OrdinalIgnoreCase).ToArray())
+        {
+            monitors.Remove(key);
+            logger.LogInformation("Monitor DNS record supprimé suite au rechargement de la configuration : {Target}", key);
+        }
+
+        foreach (var target in desiredTargets)
+        {
+            if (monitors.ContainsKey(target.Key))
+            {
+                monitors[target.Key] = new DnsRecordMonitorState(target.Value, loggerFactory.CreateLogger<DnsRecordMonitorState>());
+                logger.LogInformation("Monitor DNS record mis à jour suite au rechargement de la configuration : {Target}", target.Key);
+                continue;
+            }
+
+            monitors[target.Key] = new DnsRecordMonitorState(target.Value, loggerFactory.CreateLogger<DnsRecordMonitorState>());
+            logger.LogInformation("Monitor DNS record ajouté suite au rechargement de la configuration : {Target}", target.Key);
+        }
+    }
+
     private static ISchedule BuildSchedule(AppConfig config)
     {
         if (!string.IsNullOrWhiteSpace(config.ScheduleCron))
@@ -435,14 +529,22 @@ internal class Program
         if (config.DnsTargets.Count == 0)
             logger.LogWarning("Aucun hôte DNS à monitorer n'est configuré.");
 
+        if (config.TlsTargets.Count == 0)
+            logger.LogWarning("Aucune cible TLS à monitorer n'est configurée.");
+
+        if (config.DnsRecordTargets.Count == 0)
+            logger.LogWarning("Aucun check DNS record à monitorer n'est configuré.");
+
         logger.LogInformation(
-            "Configuration active — YAML: {YamlPath} — Dashboard: {DashboardEnabled} — Ping: {PingCount} — TCP: {TcpCount} — HTTP: {HttpCount} — DNS: {DnsCount} — Schedule: {Schedule}",
+            "Configuration active — YAML: {YamlPath} — Dashboard: {DashboardEnabled} — Ping: {PingCount} — TCP: {TcpCount} — HTTP: {HttpCount} — DNS: {DnsCount} — TLS: {TlsCount} — DNS Record: {DnsRecordCount} — Schedule: {Schedule}",
             AppConfigProvider.ConfigPath,
             config.DashboardEnabled ? "activé" : "désactivé",
             config.PingTargets.Count,
             config.TcpTargets.Count,
             config.HttpTargets.Count,
             config.DnsTargets.Count,
+            config.TlsTargets.Count,
+            config.DnsRecordTargets.Count,
             BuildSchedule(config).Description);
 
         foreach (var dnsTarget in config.DnsTargets.OrderBy(GetDnsTargetLogName, StringComparer.OrdinalIgnoreCase))
@@ -463,16 +565,20 @@ internal class Program
         }
     }
 
-    private static string BuildLifecycleMessage(string status, string version, string scheduleDescription, int pingCount, int tcpCount, int httpCount, int dnsCount, string? shutdownReason = null)
+    private static string BuildLifecycleMessage(string status, string version, string scheduleDescription, int pingCount, int tcpCount, int httpCount, int dnsCount, int tlsCount, int dnsRecordCount, string? shutdownReason = null)
     {
         var reasonLine = string.IsNullOrWhiteSpace(shutdownReason)
             ? string.Empty
             : $"\n📍 Motif : {shutdownReason}";
 
-        return $"<b>{status}</b>\n📦 Version : {version}\n🕒 Rythme : {scheduleDescription}\n🖧 IP surveillées : {pingCount}\n🔌 Ports TCP surveillés : {tcpCount}\n🌐 Endpoints HTTP surveillés : {httpCount}\n🧭 Hôtes DNS surveillés : {dnsCount}{reasonLine}";
+        return $"<b>{status}</b>\n📦 Version : {version}\n🕒 Rythme : {scheduleDescription}\n🖧 IP surveillées : {pingCount}\n🔌 Ports TCP surveillés : {tcpCount}\n🌐 Endpoints HTTP surveillés : {httpCount}\n🧭 Hôtes DNS surveillés : {dnsCount}\n🔐 Cibles TLS surveillées : {tlsCount}\n📚 DNS records surveillés : {dnsRecordCount}{reasonLine}";
     }
 
     private static string BuildTcpKey(string host, int port) => $"{host}:{port}";
+
+    private static string BuildTlsKey(string host, int port) => $"{host}:{port}";
+
+    private static string BuildDnsRecordKey(DnsRecordTargetConfig target) => $"{target.RecordType}:{target.Host}:{target.ExpectedValue}:{target.ContainsText}";
 
     private static string BuildDnsKey(DnsTargetConfig target) => !string.IsNullOrWhiteSpace(target.ReverseLookupIp)
         ? $"PTR:{target.ReverseLookupIp}"

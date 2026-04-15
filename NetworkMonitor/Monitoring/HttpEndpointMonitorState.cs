@@ -1,3 +1,4 @@
+using System.Text.Json;
 using System.Diagnostics;
 using Microsoft.Extensions.Logging;
 
@@ -15,12 +16,17 @@ class HttpEndpointMonitorState
     private DateTime? _lastEscalationAt;
     private int _failCount;
     private bool _isDown;
+    private bool _isWarning;
     private DateTime? _downSince;
     private DateTime _lastCheckAllowed = DateTime.UtcNow;
     private DateTime? _lastCheckAt;
     private DateTime? _lastSuccessAt;
     private DateTime? _lastFailureAt;
     private double? _lastDurationMs;
+    private int? _lastStatusCode;
+    private string? _lastFailureReason;
+    private string? _lastHeaderValue;
+    private string? _lastJsonValue;
 
     public HttpEndpointMonitorState(HttpTargetConfig target, ILogger logger)
     {
@@ -45,14 +51,17 @@ class HttpEndpointMonitorState
         }
 
         var startedAt = DateTime.UtcNow;
-        var stopwatch = Stopwatch.StartNew();
-        var success = await CheckHttpWithRetry(ct);
-        stopwatch.Stop();
+        var result = await CheckHttpWithRetry(ct);
 
         _lastCheckAt = startedAt;
-        _lastDurationMs = stopwatch.Elapsed.TotalMilliseconds;
+        _lastDurationMs = result.DurationMs;
+        _lastStatusCode = result.StatusCode;
+        _lastFailureReason = result.FailureReason;
+        _lastHeaderValue = result.HeaderValue;
+        _lastJsonValue = result.JsonValue;
+        _isWarning = result.IsWarning;
 
-        if (!success)
+        if (!result.Success)
         {
             _lastFailureAt = DateTime.UtcNow;
             _failCount++;
@@ -87,7 +96,11 @@ class HttpEndpointMonitorState
                 await PushoverClient.SendAsync("🟢 RECOVERY", $"HTTP {_target.Url} OK", 0, MonitorKey, _logger, ct);
             }
 
-            _logger.LogInformation("HTTP {Url} est UP", _target.Url);
+            if (_isWarning)
+                _logger.LogWarning("🟠 WARNING : HTTP {Url} a répondu en {Duration:F0} ms (seuil {Threshold} ms)", _target.Url, _lastDurationMs, _target.MaxResponseTimeMs);
+            else
+                _logger.LogInformation("HTTP {Url} est UP", _target.Url);
+
             _failCount = 0;
             _isDown = false;
             _downSince = null;
@@ -110,8 +123,9 @@ class HttpEndpointMonitorState
             Type = "HTTP",
             DisplayName = _target.Url,
             Source = AppConfigProvider.GetHttpTargetSource(_target.Url),
-            Status = _isDown ? "DOWN" : "UP",
+            Status = _isDown ? "DOWN" : _isWarning ? "WARNING" : "UP",
             IsDown = _isDown,
+            IsWarning = _isWarning,
             FailCount = _failCount,
             LastCheckAt = _lastCheckAt,
             LastSuccessAt = _lastSuccessAt,
@@ -119,52 +133,152 @@ class HttpEndpointMonitorState
             DownSince = _downSince,
             CircuitOpenUntil = circuitOpenUntil == DateTime.MinValue ? null : circuitOpenUntil,
             SnoozeUntil = snoozeUntil == DateTime.MinValue ? null : snoozeUntil,
-            LastDurationMs = _lastDurationMs
+            LastDurationMs = _lastDurationMs,
+            HttpStatusCode = _lastStatusCode,
+            FailureReason = _lastFailureReason,
+            HeaderValue = _lastHeaderValue,
+            JsonValue = _lastJsonValue
         };
     }
 
     private string MonitorKey => $"HTTP:{_target.Url}";
 
-    private async Task<bool> CheckHttpWithRetry(CancellationToken ct)
+    private async Task<HttpCheckResult> CheckHttpWithRetry(CancellationToken ct)
     {
         for (var attempt = 1; attempt <= 3; attempt++)
         {
+            var stopwatch = Stopwatch.StartNew();
             try
             {
                 using var response = await Client.GetAsync(_target.Url, ct);
-                if (_target.ExpectedStatusCode.HasValue && (int)response.StatusCode != _target.ExpectedStatusCode.Value)
+                stopwatch.Stop();
+                var statusCode = (int)response.StatusCode;
+                string? content = null;
+
+                if (_target.ExpectedStatusCode.HasValue && statusCode != _target.ExpectedStatusCode.Value)
                 {
-                    _logger.LogDebug("HTTP {Url} — tentative {Attempt}/3 : code {StatusCode} inattendu", _target.Url, attempt, (int)response.StatusCode);
+                    _logger.LogDebug("HTTP {Url} — tentative {Attempt}/3 : code {StatusCode} inattendu", _target.Url, attempt, statusCode);
+                    return Fail(stopwatch.Elapsed.TotalMilliseconds, statusCode, $"Code HTTP inattendu : {statusCode}");
                 }
-                else if (!string.IsNullOrWhiteSpace(_target.ContainsText))
+
+                if (!string.IsNullOrWhiteSpace(_target.ContainsText) || !string.IsNullOrWhiteSpace(_target.JsonPath))
+                    content = await response.Content.ReadAsStringAsync(ct);
+
+                if (!string.IsNullOrWhiteSpace(_target.ContainsText)
+                    && (content is null || !content.Contains(_target.ContainsText, StringComparison.OrdinalIgnoreCase)))
                 {
-                    var content = await response.Content.ReadAsStringAsync(ct);
-                    if (!content.Contains(_target.ContainsText, StringComparison.OrdinalIgnoreCase))
+                    _logger.LogDebug("HTTP {Url} — tentative {Attempt}/3 : texte attendu introuvable", _target.Url, attempt);
+                    return Fail(stopwatch.Elapsed.TotalMilliseconds, statusCode, "Texte attendu introuvable");
+                }
+
+                string? headerValue = null;
+                if (!string.IsNullOrWhiteSpace(_target.ExpectedHeaderName))
+                {
+                    headerValue = GetHeaderValue(response, _target.ExpectedHeaderName);
+                    if (string.IsNullOrWhiteSpace(headerValue))
                     {
-                        _logger.LogDebug("HTTP {Url} — tentative {Attempt}/3 : texte attendu introuvable", _target.Url, attempt);
+                        _logger.LogDebug("HTTP {Url} — tentative {Attempt}/3 : header {HeaderName} absent", _target.Url, attempt, _target.ExpectedHeaderName);
+                        return Fail(stopwatch.Elapsed.TotalMilliseconds, statusCode, $"Header attendu absent : {_target.ExpectedHeaderName}");
                     }
-                    else
+
+                    if (!string.IsNullOrWhiteSpace(_target.ExpectedHeaderContains)
+                        && !headerValue.Contains(_target.ExpectedHeaderContains, StringComparison.OrdinalIgnoreCase))
                     {
-                        return true;
+                        _logger.LogDebug("HTTP {Url} — tentative {Attempt}/3 : header {HeaderName} sans la valeur attendue", _target.Url, attempt, _target.ExpectedHeaderName);
+                        return Fail(stopwatch.Elapsed.TotalMilliseconds, statusCode, $"Valeur attendue absente du header {_target.ExpectedHeaderName}", headerValue: headerValue);
                     }
                 }
-                else if (response.IsSuccessStatusCode)
+
+                string? jsonValue = null;
+                if (!string.IsNullOrWhiteSpace(_target.JsonPath))
                 {
-                    return true;
+                    if (string.IsNullOrWhiteSpace(content))
+                        return Fail(stopwatch.Elapsed.TotalMilliseconds, statusCode, "Réponse JSON vide");
+
+                    if (!TryReadJsonValue(content, _target.JsonPath, out jsonValue))
+                    {
+                        _logger.LogDebug("HTTP {Url} — tentative {Attempt}/3 : chemin JSON {JsonPath} introuvable", _target.Url, attempt, _target.JsonPath);
+                        return Fail(stopwatch.Elapsed.TotalMilliseconds, statusCode, $"Chemin JSON introuvable : {_target.JsonPath}");
+                    }
+
+                    if (!string.IsNullOrWhiteSpace(_target.ExpectedJsonValue)
+                        && !string.Equals(jsonValue, _target.ExpectedJsonValue, StringComparison.OrdinalIgnoreCase))
+                    {
+                        _logger.LogDebug("HTTP {Url} — tentative {Attempt}/3 : valeur JSON {JsonPath} inattendue ({JsonValue})", _target.Url, attempt, _target.JsonPath, jsonValue);
+                        return Fail(stopwatch.Elapsed.TotalMilliseconds, statusCode, $"Valeur JSON inattendue pour {_target.JsonPath}", headerValue: headerValue, jsonValue: jsonValue);
+                    }
                 }
-                else
+
+                if (!response.IsSuccessStatusCode)
                 {
-                    _logger.LogDebug("HTTP {Url} — tentative {Attempt}/3 : HTTP {StatusCode}", _target.Url, attempt, (int)response.StatusCode);
+                    _logger.LogDebug("HTTP {Url} — tentative {Attempt}/3 : HTTP {StatusCode}", _target.Url, attempt, statusCode);
+                    return Fail(stopwatch.Elapsed.TotalMilliseconds, statusCode, $"HTTP {statusCode}", headerValue: headerValue, jsonValue: jsonValue);
                 }
+
+                var isWarning = _target.MaxResponseTimeMs is int maxResponseTimeMs
+                    && stopwatch.Elapsed.TotalMilliseconds > maxResponseTimeMs;
+
+                return new HttpCheckResult(true, isWarning, stopwatch.Elapsed.TotalMilliseconds, statusCode, null, headerValue, jsonValue);
             }
             catch (Exception ex)
             {
+                stopwatch.Stop();
                 _logger.LogDebug(ex, "HTTP {Url} — tentative {Attempt}/3 : exception", _target.Url, attempt);
+                if (attempt == 3)
+                    return Fail(stopwatch.Elapsed.TotalMilliseconds, null, ex.Message);
             }
 
             await Task.Delay(1000, ct);
         }
 
-        return false;
+        return Fail(null, null, "Échec HTTP inattendu");
+
+        static HttpCheckResult Fail(double? durationMs, int? statusCode, string failureReason, string? headerValue = null, string? jsonValue = null)
+            => new(false, false, durationMs, statusCode, failureReason, headerValue, jsonValue);
     }
+
+    private static string? GetHeaderValue(HttpResponseMessage response, string headerName)
+    {
+        if (response.Headers.TryGetValues(headerName, out var headerValues))
+            return string.Join(", ", headerValues);
+
+        if (response.Content.Headers.TryGetValues(headerName, out var contentHeaderValues))
+            return string.Join(", ", contentHeaderValues);
+
+        return null;
+    }
+
+    private static bool TryReadJsonValue(string content, string path, out string? value)
+    {
+        value = null;
+
+        try
+        {
+            using var document = JsonDocument.Parse(content);
+            JsonElement current = document.RootElement;
+            foreach (var segment in path.Split('.', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            {
+                if (current.ValueKind != JsonValueKind.Object || !current.TryGetProperty(segment, out current))
+                    return false;
+            }
+
+            value = current.ValueKind switch
+            {
+                JsonValueKind.String => current.GetString(),
+                JsonValueKind.Number => current.ToString(),
+                JsonValueKind.True => bool.TrueString,
+                JsonValueKind.False => bool.FalseString,
+                JsonValueKind.Null => null,
+                _ => current.ToString()
+            };
+
+            return true;
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+    }
+
+    private readonly record struct HttpCheckResult(bool Success, bool IsWarning, double? DurationMs, int? StatusCode, string? FailureReason, string? HeaderValue, string? JsonValue);
 }

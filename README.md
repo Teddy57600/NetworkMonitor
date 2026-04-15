@@ -24,6 +24,7 @@ Elle permet de :
 - surveiller des **services TCP** via `host:port`
 - surveiller des **endpoints HTTP/HTTPS** avec code HTTP et texte attendu
 - surveiller des **résolutions DNS** forward et reverse DNS (PTR)
+- surveiller des **certificats TLS** avec expiration et hostname attendu
 - afficher un **tableau de bord web responsive** avec vue temps réel
 - générer un **hash de mot de passe compatible** avec `authPasswordHash` depuis le dashboard
 - envoyer des notifications **Pushover** lors d'une panne, d'une reprise et d'une indisponibilité prolongée
@@ -58,6 +59,9 @@ Le projet cible **.NET 11** et active la **publication Native AOT**.
 - vérification d'URL HTTP/HTTPS
 - possibilité de valider un **code HTTP attendu**
 - possibilité de vérifier la présence d'un **texte attendu** dans la réponse
+- possibilité de définir un **temps de réponse maximal** avec état `WARNING`
+- possibilité de valider un **header HTTP attendu**
+- possibilité de valider une **valeur JSON** simple via un chemin de propriété (`status`, `data.state`, etc.)
 
 ### Surveillance DNS
 - lecture des cibles via `DNS_TARGETS` ou YAML
@@ -65,6 +69,20 @@ Le projet cible **.NET 11** et active la **publication Native AOT**.
 - possibilité de vérifier une **adresse IP attendue**
 - possibilité de vérifier le **reverse DNS / PTR** d'une IP vers un hostname attendu
 - chaque entrée DNS est suivie individuellement : **forward par nom d'hôte**, **reverse par adresse IP**
+
+### Surveillance DNS records avancés
+- lecture des checks via YAML
+- support des enregistrements **MX**, **TXT**, **CNAME** et **NS**
+- possibilité de valider une **valeur exacte attendue**
+- possibilité de valider la présence d’un **texte attendu** dans la réponse DNS
+- interrogation réalisée via un **client DNS natif .NET** (sans dépendance à `nslookup`)
+
+### Surveillance TLS
+- lecture des cibles via YAML
+- vérification d’un handshake TLS sur `host:port`
+- possibilité de valider un **hostname attendu** pour le certificat
+- détection des certificats **expirés**
+- état **WARNING** si l’expiration approche selon `warningDays`
 
 ### Alertes Pushover
 - notification `🔴 DOWN`
@@ -104,6 +122,8 @@ Le projet cible **.NET 11** et active la **publication Native AOT**.
 - action web pour **activer un snooze** sur un moniteur
 - action web pour **supprimer un snooze** sur un moniteur
 - formulaires web pour **ajouter des cibles Ping, TCP, HTTP et DNS**
+- formulaires web pour **ajouter des cibles TLS**
+- formulaires web pour **ajouter des checks DNS record**
 - boutons web pour **supprimer des cibles YAML** sur tous les types supportés
 - **édition complète du YAML** depuis le dashboard
 - **import / export** de configuration YAML
@@ -144,8 +164,10 @@ NetworkMonitor/
 │  │  └─ ManualCheckTrigger.cs
 │  ├─ Monitoring/
 │  │  ├─ DnsMonitorState.cs
+│  │  ├─ DnsRecordMonitorState.cs
 │  │  ├─ HttpEndpointMonitorState.cs
 │  │  ├─ MonitorState.cs
+│  │  ├─ TlsMonitorState.cs
 │  │  └─ TcpPortMonitorState.cs
 │  ├─ Notifications/
 │  │  ├─ PushoverClient.cs
@@ -400,6 +422,11 @@ monitoring:
     - url: "https://example.com/health"
       expectedStatusCode: 200
       containsText: "OK"
+      maxResponseTimeMs: 1500
+      expectedHeaderName: "content-type"
+      expectedHeaderContains: "application/json"
+      jsonPath: "status"
+      expectedJsonValue: "ok"
   dnsTargets:
     - host: "example.com"
       expectedAddress: "93.184.216.34"
@@ -422,6 +449,8 @@ monitoring:
 | `dashboard.authPasswordHashFile` | Fichier secret contenant le hash du mot de passe dashboard |
 | `dashboard.sessionHours` | Durée de session du dashboard en heures |
 | `dashboard.refreshSeconds` | Intervalle de rafraîchissement de l'interface web |
+| `dns.servers` | Liste de serveurs DNS explicites utilisés en priorité par le client DNS natif |
+| `dns.cacheSeconds` | Durée du cache DNS interne en secondes |
 | `pushover.token` | Token Pushover |
 | `pushover.user` | Utilisateur/groupe Pushover |
 | `pushover.startupSound` | Son de démarrage |
@@ -430,6 +459,16 @@ monitoring:
 | `monitoring.tcpTargets` | Liste des endpoints TCP |
 | `monitoring.httpTargets` | Liste des endpoints HTTP/HTTPS |
 | `monitoring.dnsTargets` | Liste des checks DNS forward et reverse |
+| `monitoring.dnsRecordTargets` | Liste des checks DNS records avancés |
+| `monitoring.tlsTargets` | Liste des checks TLS/certificat |
+
+Les checks DNS records avancés utilisent un client DNS interne .NET avec :
+
+- requêtes **UDP**
+- repli **TCP** si la réponse est tronquée
+- parsing natif des réponses **MX**, **TXT**, **CNAME**, **NS** et **SRV**
+- priorité aux serveurs configurés dans `dns.servers` ou `DNS_SERVERS`, puis aux résolveurs système
+- **cache DNS court configurable** (`dns.cacheSeconds`, 15 secondes par défaut) par résolveur, hôte et type d’enregistrement
 
 Pour `tcpTargets`, les deux syntaxes suivantes sont acceptées :
 
@@ -448,6 +487,11 @@ httpTargets:
   - url: https://example.com/status
     expectedStatusCode: 200
     containsText: "OK"
+    maxResponseTimeMs: 1500
+    expectedHeaderName: "content-type"
+    expectedHeaderContains: "application/json"
+    jsonPath: "status"
+    expectedJsonValue: "ok"
 ```
 
 Pour `dnsTargets`, les syntaxes suivantes sont acceptées :
@@ -459,6 +503,41 @@ dnsTargets:
     expectedAddress: 93.184.216.34
   - ip: 8.8.8.8
     expectedHost: dns.google
+```
+
+Pour `dnsRecordTargets`, la syntaxe suivante est acceptée :
+
+```yaml
+dnsRecordTargets:
+  - host: example.com
+    recordType: MX
+    expectedValue: mail.example.com
+  - host: _dmarc.example.com
+    recordType: TXT
+    containsText: "v=DMARC1"
+  - host: _sip._tcp.example.com
+    recordType: SRV
+    expectedValue: "10 5 5060 sip.example.com"
+```
+
+Pour configurer des serveurs DNS explicites :
+
+```yaml
+dns:
+  servers:
+    - 1.1.1.1
+    - 8.8.8.8
+  cacheSeconds: 15
+```
+
+Pour `tlsTargets`, la syntaxe suivante est acceptée :
+
+```yaml
+tlsTargets:
+  - host: example.com
+    port: 443
+    expectedHost: example.com
+    warningDays: 30
 ```
 
 ---
@@ -490,6 +569,8 @@ Pour une cible HTTP/HTTPS :
 
 - un cycle effectue jusqu'à **3 tentatives**
 - le check peut valider le **code HTTP** et/ou un **texte attendu**
+- il peut valider un **header HTTP** et une **valeur JSON** simple
+- il peut exposer un état **WARNING** si la latence dépasse `maxResponseTimeMs`
 - un `🔴 DOWN` est envoyé en cas d'échec durable
 - un `🟢 RECOVERY` est envoyé dès que l'endpoint redevient valide
 
@@ -501,6 +582,25 @@ Pour une cible DNS :
 - le mode **forward** peut vérifier qu'un hostname retourne une **IP attendue**
 - le mode **reverse** peut vérifier qu'une **IP** retourne un **hostname attendu** via PTR
 - les notifications `DOWN`, `STILL DOWN` et `RECOVERY` sont gérées comme pour les autres moniteurs
+
+### DNS records avancés
+
+Pour un check DNS record :
+
+- un cycle effectue jusqu'à **3 tentatives**
+- le check peut interroger les types **MX**, **TXT**, **CNAME**, **NS** et **SRV**
+- il peut valider une **valeur exacte** ou un **texte attendu**
+- un `DOWN` est déclenché si aucune valeur ne correspond à la règle
+
+### TLS
+
+Pour une cible TLS :
+
+- un cycle effectue jusqu'à **3 tentatives**
+- le check valide le **handshake TLS** et la présence d’un certificat
+- le certificat peut être vérifié contre un **hostname attendu**
+- un certificat expiré déclenche un état **DOWN**
+- une expiration proche déclenche un état **WARNING** visible dans le dashboard
 
 ### Snooze Pushover
 
@@ -765,17 +865,24 @@ Endpoints utiles :
 - `POST /api/actions/add-http?url=...` : ajoute un test HTTP/HTTPS au YAML
 - `POST /api/actions/add-dns?host=...` : ajoute un test DNS forward au YAML
 - `POST /api/actions/add-dns-reverse?ip=...` : ajoute un test reverse DNS / PTR au YAML
+- `POST /api/actions/add-dns-record?host=...&recordType=...` : ajoute un check DNS record avancé au YAML
+- `POST /api/actions/add-tls?host=...&port=...` : ajoute un check TLS au YAML
 - `POST /api/actions/remove-ping?target=...` : supprime une cible Ping du YAML
 - `POST /api/actions/remove-tcp?host=...&port=...` : supprime un test TCP du YAML
 - `POST /api/actions/remove-http?url=...` : supprime un test HTTP/HTTPS du YAML
 - `POST /api/actions/remove-dns?host=...` : supprime un test DNS forward du YAML
 - `POST /api/actions/remove-dns-reverse?ip=...` : supprime un test reverse DNS / PTR du YAML
+- `POST /api/actions/remove-dns-record?host=...&recordType=...` : supprime un check DNS record avancé du YAML
+- `POST /api/actions/remove-tls?host=...&port=...` : supprime un check TLS du YAML
 
 Le dashboard affiche notamment :
 
 - les compteurs globaux UP / DOWN / snoozés
 - les moniteurs Ping, TCP, HTTP et DNS
+- les moniteurs TLS avec sujet, émetteur, expiration et jours restants
+- les moniteurs DNS Record avec type d’enregistrement, valeur observée et valeur attendue
 - pour les checks DNS PTR, le **nom d'hôte concerné**
+- pour les checks HTTP avancés, le **code HTTP**, la **raison d'échec**, la **valeur de header** et la **valeur JSON** lue
 - la date du dernier contrôle, du dernier succès et du dernier échec
 - la durée du dernier test
 - l'état du circuit breaker
@@ -789,6 +896,7 @@ Le dashboard affiche notamment :
 - l'édition, l'import et l'export du YAML
 - un outil pour générer un hash de mot de passe compatible avec `authPasswordHash`
 - des formulaires pour ajouter rapidement des cibles Ping, TCP, HTTP et DNS
+- des formulaires pour ajouter rapidement des checks TLS
 - des boutons pour supprimer rapidement des cibles gérées par le YAML sur tous les types de checks
 
 ### Sécurité du dashboard
