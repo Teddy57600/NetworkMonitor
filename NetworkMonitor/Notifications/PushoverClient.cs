@@ -5,6 +5,9 @@ namespace NetworkMonitor;
 
 static class PushoverClient
 {
+    private const string DashboardUrl = "https://monitor.tal.pm";
+    private const string DashboardUrlTitle = "Ouvrir le dashboard";
+
     public static async Task SendAsync(string title, string message, int priority, string? hostKey, ILogger logger, CancellationToken ct = default, string? sound = null, bool html = false)
     {
         var config = AppConfigProvider.Current;
@@ -26,7 +29,9 @@ static class PushoverClient
                 ["user"] = config.PushoverUser,
                 ["title"] = title,
                 ["message"] = message,
-                ["priority"] = priority.ToString()
+                ["priority"] = priority.ToString(),
+                ["url"] = DashboardUrl,
+                ["url_title"] = DashboardUrlTitle
             };
 
             if (!string.IsNullOrWhiteSpace(sound))

@@ -72,6 +72,7 @@ Le projet cible **.NET 11** et active la **publication Native AOT**.
 - notification `🟢 RECOVERY`
 - notification `🚀` au démarrage et `🛑` à l'arrêt
 - sons de démarrage et d'arrêt configurables
+- lien cliquable vers le dashboard `https://monitor.tal.pm` dans chaque notification
 
 ### Snooze intelligent
 - un `receipt` Pushover est surveillé pour les alertes urgentes
