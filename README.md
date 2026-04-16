@@ -128,13 +128,14 @@ Le projet cible **.NET 11** et active la **publication Native AOT**.
 - **édition complète du YAML** depuis le dashboard
 - **import / export** de configuration YAML
 - outil **Hash password** pour générer un hash compatible `authPasswordHash`
-- filtres et recherche sur l'historique des incidents
-- filtres multi-sélection, recherche et tri sur les listes de moniteurs
+- filtres, recherche, plage de dates, presets rapides, réinitialisation et mise en évidence du preset actif sur l'historique des incidents
+- filtres multi-sélection, recherche, tri, réinitialisation et mise en évidence visuelle des filtres actifs sur les listes de moniteurs
 - compteurs par option dans les filtres du dashboard
 - organisation du dashboard par **onglets**
 - mode **dark / light** mémorisé côté navigateur
 - favicon et titre d'onglet dynamiques selon l'état global
 - rafraîchissement automatique configurable
+- validation syntaxique de `wwwroot/app.js` et `wwwroot/theme.js` au démarrage, avec contrôle structurel de `wwwroot/index.html`, pour bloquer les régressions du dashboard
 
 ---
 

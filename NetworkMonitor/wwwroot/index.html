@@ -142,7 +142,15 @@
         <section id="monitorsTab" class="tab-panel">
             <div class="tab-panel-stack">
                 <section class="panel">
-                    <div class="panel-title">Filtres des moniteurs</div>
+                    <div class="panel-header">
+                        <div>
+                            <div class="panel-title">Filtres des moniteurs</div>
+                        </div>
+                        <div class="incident-filter-actions">
+                            <span id="monitorFilterSummary" class="badge badge-muted">Aucun filtre actif</span>
+                            <button id="monitorResetFiltersButton" type="button" class="action-button ghost">Réinitialiser</button>
+                        </div>
+                    </div>
                     <div class="incident-filters">
                         <div class="field-group compact">
                             <span id="monitorStatusFilterLabel">Statut</span>
@@ -402,7 +410,9 @@
                             <h2>Historique des incidents</h2>
                             <p>Derniers incidents détectés sur les cibles surveillées</p>
                         </div>
-                        <span id="incidentFilterSummary" class="badge badge-muted">--</span>
+                        <div class="incident-filter-actions incident-filter-actions-header">
+                            <span id="incidentFilterSummary" class="badge badge-muted">--</span>
+                        </div>
                     </div>
                     <div class="incident-filters">
                         <div class="field-group compact">
@@ -416,6 +426,23 @@
                         <div class="field-group compact grow">
                             <label for="incidentSearchInput">Recherche</label>
                             <input id="incidentSearchInput" name="incidentSearchInput" type="search" placeholder="Filtrer par nom, clé ou type" />
+                        </div>
+                        <div class="field-group compact">
+                            <label for="incidentDateFromInput">Du</label>
+                            <input id="incidentDateFromInput" name="incidentDateFromInput" type="date" />
+                        </div>
+                        <div class="field-group compact">
+                            <label for="incidentDateToInput">Au</label>
+                            <input id="incidentDateToInput" name="incidentDateToInput" type="date" />
+                        </div>
+                        <div class="field-group compact">
+                            <span>Presets</span>
+                            <div class="incident-filter-actions">
+                                <button id="incidentPresetTodayButton" type="button" class="action-button ghost">Aujourd’hui</button>
+                                <button id="incidentPreset7DaysButton" type="button" class="action-button ghost">7 jours</button>
+                                <button id="incidentPreset30DaysButton" type="button" class="action-button ghost">30 jours</button>
+                                <button id="incidentResetFiltersButton" type="button" class="action-button ghost">Réinitialiser</button>
+                            </div>
                         </div>
                     </div>
                     <div id="incidentHistory" class="incident-list"></div>

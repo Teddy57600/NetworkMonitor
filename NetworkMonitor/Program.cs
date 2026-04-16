@@ -1,4 +1,6 @@
 ﻿using System.Runtime.InteropServices;
+using System.Text.RegularExpressions;
+using Esprima;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.Extensions.Logging;
 
@@ -18,6 +20,7 @@ internal class Program
                 .AddProvider(new FileLoggerProvider(Path.Combine(StateStore.DataDir, "logs"))));
 
         var logger = loggerFactory.CreateLogger<Program>();
+        ValidateDashboardJavaScriptAssets(logger);
         AppConfigProvider.RefreshIfChanged(logger);
 
         var config = AppConfigProvider.Current;
@@ -258,6 +261,138 @@ internal class Program
             DnsRecordMonitors = dnsRecordSnapshots,
             RecentIncidents = recentIncidents
         };
+    }
+
+    private static void ValidateDashboardJavaScriptAssets(ILogger logger)
+    {
+        var wwwrootPath = Path.Combine(AppContext.BaseDirectory, "wwwroot");
+        ValidateJavaScriptFile(Path.Combine(wwwrootPath, "app.js"), logger);
+        ValidateJavaScriptFile(Path.Combine(wwwrootPath, "theme.js"), logger);
+        ValidateDashboardHtmlFile(Path.Combine(wwwrootPath, "index.html"), logger);
+    }
+
+    private static void ValidateJavaScriptFile(string filePath, ILogger logger)
+    {
+        if (!File.Exists(filePath))
+            throw new FileNotFoundException($"Fichier JavaScript du dashboard introuvable : {filePath}", filePath);
+
+        var source = File.ReadAllText(filePath);
+
+        try
+        {
+            var parser = new JavaScriptParser(new ParserOptions
+            {
+                Tolerant = false
+            });
+
+            parser.ParseScript(source);
+            logger.LogInformation("Validation syntaxique du dashboard réussie : {FileName}", Path.GetFileName(filePath));
+        }
+        catch (ParserException ex)
+        {
+            throw new InvalidOperationException(
+                $"Le script du dashboard '{Path.GetFileName(filePath)}' est invalide (ligne {ex.LineNumber}, colonne {ex.Column}): {ex.Description}",
+                ex);
+        }
+    }
+
+    private static void ValidateDashboardHtmlFile(string filePath, ILogger logger)
+    {
+        if (!File.Exists(filePath))
+            throw new FileNotFoundException($"Fichier HTML du dashboard introuvable : {filePath}", filePath);
+
+        var source = File.ReadAllText(filePath);
+        var ids = Regex.Matches(source, "id=\"(?<id>[^\"]+)\"", RegexOptions.CultureInvariant)
+            .Select(match => match.Groups["id"].Value)
+            .ToHashSet(StringComparer.Ordinal);
+
+        string[] requiredIds =
+        [
+            "checkNowButton",
+            "subtitle",
+            "globalHealthBadge",
+            "generatedAt",
+            "timeZone",
+            "overviewTab",
+            "monitorsTab",
+            "configTab",
+            "incidentsTab",
+            "totalCount",
+            "upCount",
+            "downCount",
+            "snoozedCount",
+            "version",
+            "schedule",
+            "configPath",
+            "configVersion",
+            "startedAt",
+            "refreshInterval",
+            "snoozeDurationSelect",
+            "refreshIntervalSelect",
+            "monitorStatusFilter",
+            "monitorSourceFilter",
+            "monitorTypeFilter",
+            "monitorSortSelect",
+            "monitorSearchInput",
+            "monitorFilterSummary",
+            "monitorResetFiltersButton",
+            "pingMonitors",
+            "tcpMonitors",
+            "httpMonitors",
+            "dnsMonitors",
+            "tlsMonitors",
+            "dnsRecordMonitors",
+            "pingTargetForm",
+            "tcpTargetForm",
+            "httpTargetForm",
+            "dnsTargetForm",
+            "dnsReverseTargetForm",
+            "tlsTargetForm",
+            "dnsRecordTargetForm",
+            "reloadConfigButton",
+            "saveConfigButton",
+            "configImportInput",
+            "configPathDisplay",
+            "configEditor",
+            "passwordHashButton",
+            "passwordHashInput",
+            "copyPasswordHashButton",
+            "passwordHashOutput",
+            "incidentFilterSummary",
+            "incidentStatusFilter",
+            "incidentTypeFilter",
+            "incidentSearchInput",
+            "incidentDateFromInput",
+            "incidentDateToInput",
+            "incidentPresetTodayButton",
+            "incidentPreset7DaysButton",
+            "incidentPreset30DaysButton",
+            "incidentResetFiltersButton",
+            "incidentHistory",
+            "monitor-template",
+            "incident-template"
+        ];
+
+        var missingIds = requiredIds.Where(requiredId => !ids.Contains(requiredId)).ToArray();
+        if (missingIds.Length > 0)
+        {
+            throw new InvalidOperationException(
+                $"Le HTML du dashboard '{Path.GetFileName(filePath)}' ne contient pas les identifiants requis : {string.Join(", ", missingIds)}");
+        }
+
+        var tabTargets = Regex.Matches(source, "data-tab-target=\"(?<target>[^\"]+)\"", RegexOptions.CultureInvariant)
+            .Select(match => match.Groups["target"].Value)
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+
+        var missingTabPanels = tabTargets.Where(target => !ids.Contains(target)).ToArray();
+        if (missingTabPanels.Length > 0)
+        {
+            throw new InvalidOperationException(
+                $"Le HTML du dashboard '{Path.GetFileName(filePath)}' contient des onglets pointant vers des panneaux inexistants : {string.Join(", ", missingTabPanels)}");
+        }
+
+        logger.LogInformation("Validation structurelle du dashboard réussie : {FileName}", Path.GetFileName(filePath));
     }
 
     private static async Task<WebApplication?> EnsureDashboardStateAsync(

@@ -8,6 +8,7 @@ let defaultSnoozeDays = 1;
 let lastSummary = null;
 let lastIncidents = [];
 let hasLoadedConfigEditor = false;
+let activeIncidentPresetDays = null;
 let lastDashboardData = {
     pingMonitors: [],
     tcpMonitors: [],
@@ -135,15 +136,18 @@ function updateMultiSelectLabel(filterId) {
     const selected = filter.options.filter(option => option.selected);
     if (selected.length === 0 || selected.length === filter.options.length) {
         filter.button.textContent = filter.placeholder;
+        filter.container.classList.remove('has-selection');
         return;
     }
 
     if (selected.length === 1) {
         filter.button.textContent = selected[0].label;
+        filter.container.classList.add('has-selection');
         return;
     }
 
     filter.button.textContent = `${selected.length} sélectionnés`;
+    filter.container.classList.add('has-selection');
 }
 
 function getSelectedMultiSelectValues(filterId) {
@@ -154,6 +158,50 @@ function getSelectedMultiSelectValues(filterId) {
 
     const selectedValues = filter.options.filter(option => option.selected).map(option => option.value);
     return selectedValues.length === filter.options.length ? [] : selectedValues;
+}
+
+function updateMonitorFilterSummary() {
+    const summary = document.getElementById('monitorFilterSummary');
+    if (!summary) {
+        return;
+    }
+
+    const filters = getMonitorFilters();
+    const count = filters.statuses.length + filters.sources.length + filters.types.length + (filters.search ? 1 : 0);
+    summary.textContent = count === 0
+        ? 'Aucun filtre actif'
+        : `${count} filtre${count > 1 ? 's' : ''} actif${count > 1 ? 's' : ''}`;
+}
+
+function updateMonitorFilterVisualState() {
+    const searchInput = document.getElementById('monitorSearchInput');
+    searchInput?.classList.toggle('active-filter', !!searchInput.value.trim());
+    updateMonitorFilterSummary();
+}
+
+function resetMonitorFilters() {
+    document.getElementById('monitorSearchInput').value = '';
+    document.getElementById('monitorSortSelect').value = 'state';
+
+    ['monitorStatusFilter', 'monitorSourceFilter', 'monitorTypeFilter'].forEach(filterId => {
+        const filter = multiSelectFilters.get(filterId);
+        if (!filter) {
+            return;
+        }
+
+        filter.options.forEach(option => {
+            option.selected = false;
+        });
+
+        filter.panel.querySelectorAll('input[type="checkbox"]').forEach(checkbox => {
+            checkbox.checked = false;
+        });
+
+        updateMultiSelectLabel(filterId);
+    });
+
+    updateMonitorFilterVisualState();
+    rerenderMonitorLists();
 }
 
 function buildOptionLabel(name, count) {
@@ -294,7 +342,9 @@ function getIncidentFilters() {
     return {
         statuses: getSelectedMultiSelectValues('incidentStatusFilter'),
         types: getSelectedMultiSelectValues('incidentTypeFilter'),
-        search: document.getElementById('incidentSearchInput')?.value.trim().toLowerCase() ?? ''
+        search: document.getElementById('incidentSearchInput')?.value.trim().toLowerCase() ?? '',
+        dateFrom: document.getElementById('incidentDateFromInput')?.value ?? '',
+        dateTo: document.getElementById('incidentDateToInput')?.value ?? ''
     };
 }
 
@@ -302,6 +352,8 @@ function filterIncidents(incidents) {
     const filters = getIncidentFilters();
 
     return incidents.filter(incident => {
+        const incidentStartDate = incident.startedAt ? new Date(incident.startedAt) : null;
+
         if (filters.statuses.length > 0) {
             const incidentStatus = incident.isOpen ? 'open' : 'resolved';
             if (!filters.statuses.includes(incidentStatus)) {
@@ -313,6 +365,20 @@ function filterIncidents(incidents) {
             return false;
         }
 
+        if (filters.dateFrom) {
+            const fromDate = new Date(`${filters.dateFrom}T00:00:00`);
+            if (!incidentStartDate || incidentStartDate < fromDate) {
+                return false;
+            }
+        }
+
+        if (filters.dateTo) {
+            const toDate = new Date(`${filters.dateTo}T23:59:59.999`);
+            if (!incidentStartDate || incidentStartDate > toDate) {
+                return false;
+            }
+        }
+
         if (!filters.search) {
             return true;
         }
@@ -320,6 +386,71 @@ function filterIncidents(incidents) {
         const haystack = `${incident.displayName} ${incident.key} ${incident.type}`.toLowerCase();
         return haystack.includes(filters.search);
     });
+}
+
+function formatDateInputValue(date) {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+}
+
+function updateIncidentPresetButtons() {
+    const presetButtons = [
+        { id: 'incidentPresetTodayButton', days: 1 },
+        { id: 'incidentPreset7DaysButton', days: 7 },
+        { id: 'incidentPreset30DaysButton', days: 30 }
+    ];
+
+    presetButtons.forEach(({ id, days }) => {
+        const button = document.getElementById(id);
+        if (!button) {
+            return;
+        }
+
+        const isActive = activeIncidentPresetDays === days;
+        button.classList.toggle('active', isActive);
+        button.setAttribute('aria-pressed', isActive ? 'true' : 'false');
+    });
+}
+
+function applyIncidentDatePreset(days) {
+    activeIncidentPresetDays = days;
+    const today = new Date();
+    const fromDate = new Date(today);
+    fromDate.setDate(today.getDate() - Math.max(0, days - 1));
+
+    document.getElementById('incidentDateFromInput').value = formatDateInputValue(fromDate);
+    document.getElementById('incidentDateToInput').value = formatDateInputValue(today);
+    updateIncidentPresetButtons();
+    renderIncidentList('incidentHistory', lastIncidents);
+}
+
+function resetIncidentFilters() {
+    activeIncidentPresetDays = null;
+    document.getElementById('incidentSearchInput').value = '';
+    document.getElementById('incidentDateFromInput').value = '';
+    document.getElementById('incidentDateToInput').value = '';
+
+    ['incidentStatusFilter', 'incidentTypeFilter'].forEach(filterId => {
+        const filter = multiSelectFilters.get(filterId);
+        if (!filter) {
+            return;
+        }
+
+        filter.options.forEach(option => {
+            option.selected = false;
+        });
+
+        filter.panel.querySelectorAll('input[type="checkbox"]').forEach(checkbox => {
+            checkbox.checked = false;
+        });
+
+        updateMultiSelectLabel(filterId);
+    });
+
+    updateIncidentPresetButtons();
+    renderIncidentList('incidentHistory', lastIncidents);
 }
 
 async function addDnsRecordTarget(event) {
@@ -505,6 +636,7 @@ async function copyPasswordHash() {
 }
 
 function rerenderMonitorLists() {
+    updateMonitorFilterVisualState();
     renderMonitorList('pingMonitors', lastDashboardData.pingMonitors);
     renderMonitorList('tcpMonitors', lastDashboardData.tcpMonitors);
     renderMonitorList('httpMonitors', lastDashboardData.httpMonitors);
@@ -1592,6 +1724,20 @@ document.getElementById('refreshIntervalSelect').addEventListener('change', even
     scheduleNextRefresh();
 });
 document.getElementById('incidentSearchInput').addEventListener('input', () => renderIncidentList('incidentHistory', lastIncidents));
+document.getElementById('incidentDateFromInput').addEventListener('change', () => {
+    activeIncidentPresetDays = null;
+    updateIncidentPresetButtons();
+    renderIncidentList('incidentHistory', lastIncidents);
+});
+document.getElementById('incidentDateToInput').addEventListener('change', () => {
+    activeIncidentPresetDays = null;
+    updateIncidentPresetButtons();
+    renderIncidentList('incidentHistory', lastIncidents);
+});
+document.getElementById('incidentPresetTodayButton').addEventListener('click', () => applyIncidentDatePreset(1));
+document.getElementById('incidentPreset7DaysButton').addEventListener('click', () => applyIncidentDatePreset(7));
+document.getElementById('incidentPreset30DaysButton').addEventListener('click', () => applyIncidentDatePreset(30));
+document.getElementById('incidentResetFiltersButton').addEventListener('click', resetIncidentFilters);
 document.getElementById('saveConfigButton').addEventListener('click', saveConfigEditor);
 document.getElementById('reloadConfigButton').addEventListener('click', loadConfigEditor);
 document.getElementById('configImportInput').addEventListener('change', importConfigFile);
@@ -1607,6 +1753,7 @@ document.getElementById('passwordHashInput').addEventListener('keydown', event =
 document.getElementById('copyPasswordHashButton').addEventListener('click', copyPasswordHash);
 document.getElementById('monitorSortSelect').addEventListener('change', rerenderMonitorLists);
 document.getElementById('monitorSearchInput').addEventListener('input', rerenderMonitorLists);
+document.getElementById('monitorResetFiltersButton').addEventListener('click', resetMonitorFilters);
 initializeMultiSelectFilters();
 initializeTabs();
 refresh();
