@@ -223,7 +223,9 @@ function updateIncidentFilterOptions() {
         { value: 'Ping', label: buildOptionLabel('Ping', typeCounts.get('Ping') ?? 0) },
         { value: 'TCP', label: buildOptionLabel('TCP', typeCounts.get('TCP') ?? 0) },
         { value: 'HTTP', label: buildOptionLabel('HTTP', typeCounts.get('HTTP') ?? 0) },
-        { value: 'DNS', label: buildOptionLabel('DNS', typeCounts.get('DNS') ?? 0) }
+        { value: 'DNS', label: buildOptionLabel('DNS', typeCounts.get('DNS') ?? 0) },
+        { value: 'TLS', label: buildOptionLabel('TLS', typeCounts.get('TLS') ?? 0) },
+        { value: 'DNS Record', label: buildOptionLabel('DNS Record', typeCounts.get('DNS Record') ?? 0) }
     ]);
 }
 
@@ -306,6 +308,19 @@ function filterIncidents(incidents) {
                 return false;
             }
         }
+
+        if (filters.types.length > 0 && !filters.types.includes(incident.type)) {
+            return false;
+        }
+
+        if (!filters.search) {
+            return true;
+        }
+
+        const haystack = `${incident.displayName} ${incident.key} ${incident.type}`.toLowerCase();
+        return haystack.includes(filters.search);
+    });
+}
 
 async function addDnsRecordTarget(event) {
     event.preventDefault();
@@ -489,25 +504,13 @@ async function copyPasswordHash() {
     }
 }
 
-        if (filters.types.length > 0 && !filters.types.includes(incident.type)) {
-            return false;
-        }
-
-        if (!filters.search) {
-            return true;
-        }
-
-        const haystack = `${incident.displayName} ${incident.key} ${incident.type}`.toLowerCase();
-        return haystack.includes(filters.search);
-    });
-}
-
 function rerenderMonitorLists() {
     renderMonitorList('pingMonitors', lastDashboardData.pingMonitors);
     renderMonitorList('tcpMonitors', lastDashboardData.tcpMonitors);
     renderMonitorList('httpMonitors', lastDashboardData.httpMonitors);
     renderMonitorList('dnsMonitors', lastDashboardData.dnsMonitors);
     renderMonitorList('tlsMonitors', lastDashboardData.tlsMonitors);
+    renderMonitorList('dnsRecordMonitors', lastDashboardData.dnsRecordMonitors);
 }
 
 function initializeTabs() {
