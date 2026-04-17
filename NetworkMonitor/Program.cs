@@ -285,7 +285,7 @@ internal class Program
                 Tolerant = false
             });
 
-            parser.ParseScript(source);
+            parser.ParseModule(source);
             logger.LogInformation("Validation syntaxique du dashboard réussie : {FileName}", Path.GetFileName(filePath));
         }
         catch (ParserException ex)

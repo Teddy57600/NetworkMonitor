@@ -44,9 +44,9 @@ FROM ${FINAL_BASE_IMAGE:-mcr.microsoft.com/dotnet/runtime-deps:11.0-preview} AS 
 WORKDIR /app
 COPY --from=publish /app/publish .
 
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends tzdata \
-    && rm -rf /var/lib/apt/lists/*
+#RUN apt-get update \
+    #&& apt-get install -y --no-install-recommends tzdata \
+    #&& rm -rf /var/lib/apt/lists/*
 
 ENV TZ=Europe/Paris
 ENV ASPNETCORE_URLS=http://0.0.0.0:8080
@@ -65,5 +65,5 @@ EXPOSE 8080
 
 ENTRYPOINT ["./NetworkMonitor"]
 
-ENV APP_VERSION="2.4.9"
-LABEL Version="2.4.9"
+ENV APP_VERSION="2.4.17"
+LABEL Version="2.4.17"

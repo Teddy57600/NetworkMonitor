@@ -14,44 +14,47 @@
     <link rel="stylesheet" href="/site.css" />
 </head>
 <body>
-    <div class="shell shell-login">
-        <section class="hero hero-login">
-            <div>
-                <p class="eyebrow">NetworkMonitor</p>
-                <h1>Connexion au dashboard</h1>
-                <p class="subtitle">Authentification requise pour accéder au tableau de bord.</p>
-                <div class="hero-actions login-actions">
-                    <button id="themeToggleButton" type="button" class="action-button ghost">☀️ Mode clair</button>
+    <canvas id="canvas"></canvas>
+    <div id="app">
+        <div class="shell shell-login">
+            <section class="hero hero-login">
+                <div>
+                    <p class="eyebrow">NetworkMonitor</p>
+                    <h1>Connexion au dashboard</h1>
+                    <p class="subtitle">Authentification requise pour accéder au tableau de bord.</p>
+                    <div class="hero-actions login-actions">
+                        <button id="themeToggleButton" type="button" class="action-button ghost">☀️ Mode clair</button>
+                    </div>
+                    <div class="login-meta">
+                        <span class="badge">Version {{APP_VERSION}}</span>
+                        <span class="badge badge-muted">Fuseau {{TIMEZONE}}</span>
+                    </div>
                 </div>
-                <div class="login-meta">
-                    <span class="badge">Version {{APP_VERSION}}</span>
-                    <span class="badge badge-muted">Fuseau {{TIMEZONE}}</span>
-                </div>
-            </div>
-        </section>
+            </section>
 
-        <section class="panel login-panel">
-            <div class="panel-title">Accès sécurisé</div>
-            <p id="loginError" class="login-error" hidden>Nom d'utilisateur ou mot de passe invalide.</p>
+            <section class="panel login-panel">
+                <div class="panel-title">Accès sécurisé</div>
+                <p id="loginError" class="login-error" hidden>Nom d'utilisateur ou mot de passe invalide.</p>
 
-            <form method="post" action="/login" class="login-form">
-                <div class="field-group">
-                    <label for="username">Nom d'utilisateur</label>
-                    <input id="username" name="username" type="text" autocomplete="username" required />
-                </div>
+                <form method="post" action="/login" class="login-form">
+                    <div class="field-group">
+                        <label for="username">Nom d'utilisateur</label>
+                        <input id="username" name="username" type="text" autocomplete="username" required />
+                    </div>
 
-                <div class="field-group">
-                    <label for="password">Mot de passe</label>
-                    <input id="password" name="password" type="password" autocomplete="current-password" required />
-                </div>
+                    <div class="field-group">
+                        <label for="password">Mot de passe</label>
+                        <input id="password" name="password" type="password" autocomplete="current-password" required />
+                    </div>
 
-                <button type="submit" class="action-button primary">Se connecter</button>
-            </form>
-        </section>
+                    <button type="submit" class="action-button primary">Se connecter</button>
+                </form>
+            </section>
+        </div>
     </div>
-
     <script src="/buttons.js"></script>
     <script src="/theme.js"></script>
+    <script type="module" src="/login.js"></script>
     <script>
         const params = new URLSearchParams(window.location.search);
         if (params.get('error') === '1') {
