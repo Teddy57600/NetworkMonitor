@@ -22,8 +22,10 @@ function updateThemeToggleButton() {
 
     const theme = document.documentElement.dataset.theme || 'dark';
     const isLightTheme = theme === 'light';
-    button.textContent = isLightTheme ? '🌙 Mode sombre' : '☀️ Mode clair';
+    button.dataset.buttonLabel = isLightTheme ? 'Mode sombre' : 'Mode clair';
+    button.dataset.buttonIcon = isLightTheme ? '☾' : '◐';
     button.setAttribute('aria-label', isLightTheme ? 'Activer le mode sombre' : 'Activer le mode clair');
+    window.NetworkMonitorButtons?.refreshButton(button);
 }
 
 function toggleTheme() {
@@ -37,6 +39,7 @@ function toggleTheme() {
 function initializeTheme() {
     applyTheme(getPreferredTheme());
     updateThemeToggleButton();
+    window.NetworkMonitorButtons?.enhanceAll(document);
 
     const button = document.getElementById('themeToggleButton');
     if (button) {

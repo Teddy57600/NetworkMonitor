@@ -661,8 +661,11 @@ function initializeTabs() {
 
             button.classList.add('active');
             document.getElementById(targetId)?.classList.add('active');
+            buttons.forEach(item => window.NetworkMonitorButtons?.refreshButton(item));
         });
     });
+
+    buttons.forEach(button => window.NetworkMonitorButtons?.prepareButton(button));
 }
 
 function updateIncidentFilterSummary(visibleCount, totalCount) {
@@ -1550,16 +1553,19 @@ function renderMonitorList(containerId, monitors) {
             const snoozeButton = document.createElement('button');
             snoozeButton.type = 'button';
             snoozeButton.className = 'action-button secondary';
-            snoozeButton.textContent = 'Snoozer';
+            snoozeButton.dataset.buttonLabel = 'Snoozer';
+            snoozeButton.dataset.buttonIcon = '⏸';
             snoozeButton.addEventListener('click', () => snoozeMonitor(monitor.key, snoozeButton));
             actions.appendChild(snoozeButton);
+            window.NetworkMonitorButtons?.prepareButton(snoozeButton);
         }
 
         if (monitor.source !== 'ENV') {
             const removeButton = document.createElement('button');
             removeButton.type = 'button';
             removeButton.className = 'action-button danger';
-            removeButton.textContent = monitor.type === 'Ping' ? 'Supprimer la cible' : 'Supprimer le test';
+            removeButton.dataset.buttonLabel = monitor.type === 'Ping' ? 'Supprimer la cible' : 'Supprimer le test';
+            removeButton.dataset.buttonIcon = '✕';
             removeButton.addEventListener('click', () => {
                 if (monitor.type === 'TCP') {
                     removeTcpTarget(monitor.key, removeButton);
@@ -1594,15 +1600,18 @@ function renderMonitorList(containerId, monitors) {
                 removePingTarget(monitor.key, removeButton);
             });
             actions.appendChild(removeButton);
+            window.NetworkMonitorButtons?.prepareButton(removeButton);
         }
 
         if (monitor.snoozeUntil) {
             const clearSnoozeButton = document.createElement('button');
             clearSnoozeButton.type = 'button';
             clearSnoozeButton.className = 'action-button ghost';
-            clearSnoozeButton.textContent = 'Supprimer le snooze';
+            clearSnoozeButton.dataset.buttonLabel = 'Supprimer le snooze';
+            clearSnoozeButton.dataset.buttonIcon = '◉';
             clearSnoozeButton.addEventListener('click', () => clearSnooze(monitor.key, clearSnoozeButton));
             actions.appendChild(clearSnoozeButton);
+            window.NetworkMonitorButtons?.prepareButton(clearSnoozeButton);
         }
 
         const meta = node.querySelector('.monitor-meta');
@@ -1756,4 +1765,5 @@ document.getElementById('monitorSearchInput').addEventListener('input', rerender
 document.getElementById('monitorResetFiltersButton').addEventListener('click', resetMonitorFilters);
 initializeMultiSelectFilters();
 initializeTabs();
+window.NetworkMonitorButtons?.enhanceAll(document);
 refresh();

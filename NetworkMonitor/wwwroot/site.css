@@ -53,24 +53,6 @@
     color: #475569;
 }
 
-:root[data-theme="light"] .action-button.secondary {
-    background: rgba(245, 158, 11, .16);
-    color: #92400e;
-    border: 1px solid rgba(217, 119, 6, .28);
-}
-
-:root[data-theme="light"] .action-button.danger {
-    background: rgba(239, 68, 68, .14);
-    color: #b91c1c;
-    border: 1px solid rgba(220, 38, 38, .22);
-}
-
-:root[data-theme="light"] .action-button.ghost {
-    background: rgba(148, 163, 184, .14);
-    color: #334155;
-    border: 1px solid rgba(148, 163, 184, .3);
-}
-
 :root[data-theme="light"] .source-badge.source-env {
     color: #1d4ed8;
     border-color: rgba(37, 99, 235, .22);
@@ -140,27 +122,9 @@ body {
     margin-bottom: 1rem;
 }
 
-.tab-button {
-    border: 1px solid var(--panel-border);
-    background: var(--panel);
-    color: var(--text);
-    border-radius: 999px;
-    padding: .8rem 1.15rem;
-    font: inherit;
-    font-weight: 600;
-    cursor: pointer;
-    box-shadow: var(--shadow);
-    transition: transform .15s ease, background .15s ease, border-color .15s ease, color .15s ease;
-}
-
-.tab-button:hover {
-    transform: translateY(-1px);
-}
-
-.tab-button.active {
-    background: linear-gradient(135deg, #2563eb, #3b82f6);
-    color: white;
-    border-color: transparent;
+.tab-button:focus-visible {
+    outline: 2px solid rgba(96, 165, 250, .45);
+    outline-offset: 3px;
 }
 
 .tab-panel {
@@ -271,44 +235,101 @@ body {
     }
 }
 
-.action-button {
-    border: none;
-    border-radius: 999px;
-    padding: .75rem 1rem;
-    font: inherit;
-    font-weight: 600;
-    cursor: pointer;
-    transition: transform .15s ease, opacity .15s ease, background .15s ease;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    text-decoration: none;
-}
-.action-button:hover:not(:disabled) {
-    transform: translateY(-1px);
+.action-button:focus-visible {
+    outline: 2px solid rgba(96, 165, 250, .45);
+    outline-offset: 3px;
 }
 .action-button:disabled {
     opacity: .65;
     cursor: wait;
 }
-.action-button.primary {
-    background: linear-gradient(135deg, #2563eb, #3b82f6);
-    color: white;
+
+.action-button,
+.tab-button {
+    appearance: none;
+    background: transparent;
+    border: none;
+    padding: 0;
+    color: inherit;
+    font: inherit;
+    line-height: 1;
+    text-decoration: none;
+    cursor: pointer;
+    user-select: none;
+    -webkit-tap-highlight-color: transparent;
 }
-.action-button.secondary {
-    background: rgba(245, 158, 11, .14);
-    color: #fcd34d;
-    border: 1px solid rgba(245, 158, 11, .35);
+
+.action-button:hover:not(:disabled),
+.tab-button:hover:not(:disabled) {
+    filter: brightness(1.02);
 }
-.action-button.danger {
-    background: rgba(239, 68, 68, .14);
-    color: #fda4af;
-    border: 1px solid rgba(239, 68, 68, .35);
+
+.action-button:active:not(:disabled),
+.tab-button:active:not(:disabled) {
+    transform: translateY(1px);
 }
-.action-button.ghost {
-    background: rgba(148, 163, 184, .12);
-    color: #e2e8f0;
-    border: 1px solid rgba(148, 163, 184, .2);
+
+.svg-button-host {
+    display: inline-block;
+    vertical-align: top;
+}
+
+.svg-button-art {
+    width: 100%;
+    height: 100%;
+    overflow: visible;
+    pointer-events: none;
+    transform: translateY(0);
+    transition: transform .08s ease, filter .08s ease;
+}
+
+.svg-button-art * {
+    pointer-events: none;
+}
+
+.svg-button-text {
+    pointer-events: none;
+    font-weight: 900;
+}
+
+.svg-button-icon {
+    font-family: Inter, system-ui, sans-serif;
+    font-size: 20px;
+}
+
+.svg-button-label {
+    font-family: Inter, system-ui, sans-serif;
+    font-size: 15px;
+    letter-spacing: 1px;
+}
+
+.tab-button .svg-button-label {
+    font-size: 13px;
+}
+
+.action-button.active,
+.tab-button.active {
+    filter: saturate(1.02);
+}
+
+.button-full-width {
+    display: block;
+    width: 100%;
+}
+
+.file-button {
+    cursor: pointer;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .action-button,
+    .tab-button {
+        transition: none;
+    }
+
+    .svg-button-art {
+        transition: none;
+    }
 }
 
 .stats-grid, .panel-grid, .cards-grid, .incident-list {
