@@ -32,6 +32,12 @@
     <Content Update="wwwroot\login.html">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </Content>
+    <Content Update="wwwroot\noise_button.js">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Update="wwwroot\organic_bg.js">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
     <Content Update="wwwroot\site.css">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </Content>

@@ -48,6 +48,13 @@ COPY --from=publish /app/publish .
     #&& apt-get install -y --no-install-recommends tzdata \
     #&& rm -rf /var/lib/apt/lists/*
 
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends nano \
+    && apt-get install -y --no-install-recommends fish \
+    && chsh -s /usr/bin/fish \
+    && /usr/bin/fish \
+    && rm -rf /var/lib/apt/lists/*
+
 ENV TZ=Europe/Paris
 ENV ASPNETCORE_URLS=http://0.0.0.0:8080
 ENV PUSHOVER_TOKEN=""
@@ -65,5 +72,5 @@ EXPOSE 8080
 
 ENTRYPOINT ["./NetworkMonitor"]
 
-ENV APP_VERSION="2.4.17"
-LABEL Version="2.4.17"
+ENV APP_VERSION="2.4.40"
+LABEL Version="2.4.40"
